@@ -11,6 +11,7 @@ import ProtectPdf from './tool-pages/ProtectPdf';
 import GenericTool from './tool-pages/GenericTool';
 import ConvertToPdf from './tool-pages/ConvertToPdf';
 import PdfToOffice from './tool-pages/PdfToOffice';
+import ScanQrCode from './tool-pages/ScanQrCode';
 
 const toolComponents: Record<string, React.ComponentType> = {
   'compress-pdf': CompressPdf,
@@ -50,6 +51,8 @@ const toolComponents: Record<string, React.ComponentType> = {
   'compare-pdf': GenericTool,
   'ai-summarizer': GenericTool,
   'translate-pdf': GenericTool,
+  // QR Code
+  'qr-code': ScanQrCode,
 };
 
 export default function ToolRouter() {

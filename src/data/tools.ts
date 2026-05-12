@@ -22,6 +22,7 @@ import {
   FileInput,
   Brain,
   Languages,
+  QrCode,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -359,6 +360,16 @@ export const tools: Tool[] = [
     color: '#1abc9c',
     acceptTypes: '.pdf',
     outputLabel: 'Translated PDF',
+  },
+  {
+    id: 'qr-code',
+    name: 'QR Code',
+    description: 'Scan QR codes from images or generate QR codes from text and URLs.',
+    icon: QrCode,
+    category: 'convert',
+    color: '#3498db',
+    acceptTypes: '.png,.jpg,.jpeg,.gif,.webp',
+    outputLabel: 'QR Result',
   },
 ];
 
