@@ -376,7 +376,10 @@ export default function ConvertToPdf() {
 
     // DOCX uses the server for high-fidelity conversion.
     if (file.name.toLowerCase().endsWith('.docx')) {
-      const serverUrl = 'http://localhost:3000/convert';
+      const serverUrl = import.meta.env.VITE_CONVERT_API_URL || (import.meta.env.DEV ? 'http://localhost:3000/convert' : '');
+      if (!serverUrl) {
+        throw new Error('DOCX conversion backend URL is not configured. Set VITE_CONVERT_API_URL to your deployed convert service.');
+      }
       const form = new FormData();
       form.append('file', file, file.name);
 
