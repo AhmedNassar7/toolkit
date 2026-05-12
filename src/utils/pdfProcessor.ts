@@ -1,6 +1,34 @@
 import { PDFDocument, degrees, rgb } from 'pdf-lib';
 import { saveAs } from 'file-saver';
 
+// Sanitize text for WinAnsi compatibility
+function sanitizeText(text: string): string {
+  const replacements: Record<string, string> = {
+    '\u2192': '->',      // →
+    '\u2190': '<-',      // ←
+    '\u2022': '*',       // •
+    '\u2013': '-',       // –
+    '\u2014': '-',       // —
+    '\u201C': '"',       // "
+    '\u201D': '"',       // "
+    '\u2018': "'",       // '
+    '\u2019': "'",       // '
+    '\u2026': '...',     // …
+    '\u00A9': '(c)',     // ©
+    '\u00AE': '(R)',     // ®
+    '\u2122': '(TM)',    // ™
+    '\u20AC': 'EUR',     // €
+  };
+
+  let result = text;
+  for (const [char, replacement] of Object.entries(replacements)) {
+    result = result.split(char).join(replacement);
+  }
+  // Replace remaining non-ASCII with ?
+  result = result.replace(/[^\x20-\x7E\n\r\t]/g, '?');
+  return result;
+}
+
 export async function compressPdf(file: File | Blob): Promise<Blob> {
   const arrayBuffer = await file.arrayBuffer();
   const pdfDoc = await PDFDocument.load(arrayBuffer, { ignoreEncryption: true });
@@ -71,12 +99,13 @@ export async function watermarkPdf(
   const opacity = options?.opacity ?? 0.3;
   const fontSize = options?.fontSize ?? 50;
   const color = parseHexColor(options?.color);
+  const sanitizedText = sanitizeText(text);
 
   for (const page of pages) {
     const { width, height } = page.getSize();
-    const textWidth = font.widthOfTextAtSize(text, fontSize);
+    const textWidth = font.widthOfTextAtSize(sanitizedText, fontSize);
 
-    page.drawText(text, {
+    page.drawText(sanitizedText, {
       x: (width - textWidth) / 2,
       y: height / 2,
       size: fontSize,
@@ -137,7 +166,7 @@ export async function protectPdf(file: File | Blob, _password: string): Promise<
   // In production, this would use a server-side tool
   const arrayBuffer = await file.arrayBuffer();
   const pdfDoc = await PDFDocument.load(arrayBuffer, { ignoreEncryption: true });
-  pdfDoc.setTitle('Protected Document');
+  pdfDoc.setTitle(sanitizeText('Protected Document'));
   const bytes = await pdfDoc.save();
   return new Blob([new Uint8Array(bytes)], { type: 'application/pdf' });
 }
