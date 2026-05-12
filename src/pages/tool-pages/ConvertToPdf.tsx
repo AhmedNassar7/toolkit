@@ -75,37 +75,62 @@ function sanitizeText(text: string): string {
   return result;
 }
 
-// Extract text from DOCX file
-async function extractDocxText(file: File): Promise<string> {
+// Parse DOCX into structured paragraphs and runs so layout can be preserved
+type Run = { text: string; bold?: boolean; italic?: boolean };
+type Paragraph = { runs: Run[]; isHeading?: number; isList?: boolean; listLevel?: number; isBullet?: boolean };
+
+async function extractDocxText(file: File): Promise<Paragraph[] | string> {
   try {
     const JSZip = await import('jszip');
     const zip = new JSZip.default();
     const contents = await zip.loadAsync(file);
 
-    // Read document.xml from DOCX
     const docXml = await contents.file('word/document.xml')?.async('text');
-    if (!docXml) {
-      return `[Unable to extract text from ${file.name}]`;
-    }
+    if (!docXml) return `[Unable to extract text from ${file.name}]`;
 
-    // Parse XML and extract text from paragraphs and runs
     const parser = new DOMParser();
     const xmlDoc = parser.parseFromString(docXml, 'application/xml');
 
-    // Extract all text nodes from paragraphs (w:p elements)
-    const paragraphs: string[] = [];
+    const paragraphs: Paragraph[] = [];
 
-    xmlDoc.querySelectorAll('w\\:p, p').forEach((paragraph) => {
-      const textInPara = Array.from(paragraph.querySelectorAll('w\\:t, t'))
-        .map((node) => node.textContent || '')
-        .join('');
-      if (textInPara.trim()) {
-        paragraphs.push(textInPara);
+    xmlDoc.querySelectorAll('w\\:p, p').forEach((p) => {
+      // Detect paragraph style (heading)
+      const pStyle = p.querySelector('w\\:pPr > w\\:pStyle');
+      let isHeading: number | undefined;
+      if (pStyle) {
+        const val = pStyle.getAttribute('w:val') || pStyle.getAttribute('val') || '';
+        const m = val.match(/Heading(\\d+)/i);
+        if (m) isHeading = parseInt(m[1], 10);
+      }
+
+      // Detect numbering (lists)
+      const numPr = p.querySelector('w\\:numPr');
+      const isList = !!numPr;
+
+      // Aggregate runs
+      const runs: Run[] = [];
+      p.querySelectorAll('w\\:r, r').forEach((r) => {
+        const t = r.querySelector('w\\:t, t');
+        if (!t || !t.textContent) return;
+        const text = t.textContent || '';
+        const bold = !!r.querySelector('w\\:b, b');
+        const italic = !!r.querySelector('w\\:i, i');
+        runs.push({ text, bold, italic });
+      });
+
+      // If runs empty but there are text nodes directly under p (like w:t), collect them
+      if (runs.length === 0) {
+        const directText = Array.from(p.querySelectorAll('w\\:t, t')).map((n) => n.textContent || '').join('');
+        if (directText.trim()) runs.push({ text: directText });
+      }
+
+      if (runs.length > 0) {
+        paragraphs.push({ runs, isHeading, isList: isList || undefined, listLevel: isList ? 0 : undefined, isBullet: undefined });
       }
     });
 
-    return paragraphs.length > 0 ? paragraphs.join('\n') : `[${file.name} appears to be empty]`;
-  } catch {
+    return paragraphs.length > 0 ? paragraphs : `[${file.name} appears to be empty]`;
+  } catch (err) {
     return `[Could not parse DOCX file: ${file.name}]`;
   }
 }
@@ -116,7 +141,7 @@ async function extractImageText(file: File): Promise<string> {
 }
 
 // Parse and extract text based on file type
-async function extractFileContent(file: File): Promise<string> {
+async function extractFileContent(file: File): Promise<Paragraph[] | string> {
   const ext = file.name.split('.').pop()?.toLowerCase();
 
   if (ext === 'docx') {
@@ -169,16 +194,13 @@ async function processor(files: File[]): Promise<ProcessResult> {
   const maxWidth = pageWidth - margin * 2;
 
   // Extract content from file
-  let content = await extractFileContent(file);
-  
-  // Sanitize content to remove non-WinAnsi characters
-  content = sanitizeText(content);
+  const content = await extractFileContent(file);
 
   // Create pages and add content
-  const font = await pdfDoc.embedFont('Helvetica');
-  const boldFont = await pdfDoc.embedFont('Helvetica');
-  const fontSize = 11;
-  const lineHeight = fontSize * 1.5;
+  const regularFont = await pdfDoc.embedFont('Helvetica');
+  const boldFont = await pdfDoc.embedFont('Helvetica-Bold');
+  const italicFont = await pdfDoc.embedFont('Helvetica-Oblique');
+  const boldItalicFont = await pdfDoc.embedFont('Helvetica-BoldOblique');
 
   let currentPage = pdfDoc.addPage([pageWidth, pageHeight]);
   let yPosition = pageHeight - margin;
@@ -191,26 +213,133 @@ async function processor(files: File[]): Promise<ProcessResult> {
     font: boldFont,
     color: rgb(0, 0, 0),
   });
-  yPosition -= lineHeight * 1.5;
+  yPosition -= 20;
 
-  // Wrap and add content text
-  const wrappedLines = wrapText(content, maxWidth, fontSize);
-
-  for (const line of wrappedLines) {
-    // Check if we need a new page
-    if (yPosition - lineHeight < margin) {
+  // Helper: ensure there's space or add a new page
+  function ensureSpace(required: number) {
+    if (yPosition - required < margin) {
       currentPage = pdfDoc.addPage([pageWidth, pageHeight]);
       yPosition = pageHeight - margin;
     }
+  }
 
-    currentPage.drawText(line, {
-      x: margin,
-      y: yPosition,
-      size: fontSize,
-      font,
-      color: rgb(0.1, 0.1, 0.1),
-    });
-    yPosition -= lineHeight;
+  // Helper: split text to fit width using font measurements
+  function splitTextToFit(text: string, fontObj: any, size: number, remainingWidth: number) {
+    if (!text) return ['', ''];
+    let low = 0;
+    let high = text.length;
+    // binary search for fitting length
+    while (low < high) {
+      const mid = Math.ceil((low + high) / 2);
+      const substr = text.slice(0, mid);
+      const w = fontObj.widthOfTextAtSize(substr, size);
+      if (w <= remainingWidth) low = mid;
+      else high = mid - 1;
+      if (low + 1 === high) {
+        const w2 = fontObj.widthOfTextAtSize(text.slice(0, high), size);
+        if (w2 <= remainingWidth) low = high;
+        break;
+      }
+    }
+    if (low === 0) return [text, ''];
+    return [text.slice(0, low), text.slice(low)];
+  }
+
+  // If content is plain string (non-docx), fall back to previous simple rendering
+  if (typeof content === 'string') {
+    const sanitized = sanitizeText(content);
+    const fontSize = 11;
+    const lineHeight = fontSize * 1.5;
+    const lines = wrapText(sanitized, maxWidth, fontSize);
+    for (const line of lines) {
+      ensureSpace(lineHeight);
+      currentPage.drawText(line, { x: margin, y: yPosition, size: fontSize, font: regularFont, color: rgb(0.1, 0.1, 0.1) });
+      yPosition -= lineHeight;
+    }
+  } else {
+    // content is structured paragraphs
+    const paragraphs = content as Paragraph[];
+    for (const para of paragraphs) {
+      // Determine style
+      const headingLevel = para.isHeading || 0;
+      const isList = !!para.isList;
+      const fontSize = headingLevel ? Math.max(18 - (headingLevel - 1) * 2, 12) : 11;
+      const lineHeight = fontSize * 1.4;
+      const indent = isList ? 20 : 0;
+
+      // Build sequence of segments from runs
+      const segments = para.runs.map((r) => {
+        const clean = sanitizeText(r.text);
+        const useFont = r.bold && r.italic ? boldItalicFont : r.bold ? boldFont : r.italic ? italicFont : regularFont;
+        return { text: clean, fontObj: useFont };
+      });
+
+      // Layout segments into lines by measuring widths
+      let x = margin + indent;
+      let remainingWidth = maxWidth - indent;
+
+      // If list, prefix bullet
+      let prefix = '';
+      if (isList) prefix = '• ';
+
+      // Start a new line buffer
+      let lineBuffer: Array<{ text: string; fontObj: any }> = [];
+
+      // Helper to flush line buffer to page
+      function flushLine() {
+        if (lineBuffer.length === 0) return;
+        ensureSpace(lineHeight);
+        let drawX = x;
+        for (const seg of lineBuffer) {
+          currentPage.drawText(seg.text, { x: drawX, y: yPosition, size: fontSize, font: seg.fontObj, color: rgb(0.1, 0.1, 0.1) });
+          drawX += seg.fontObj.widthOfTextAtSize(seg.text, fontSize);
+        }
+        yPosition -= lineHeight;
+        lineBuffer = [];
+      }
+
+      // If there is a prefix, try to put it first
+      if (prefix) {
+        const pFont = regularFont;
+        const pWidth = pFont.widthOfTextAtSize(prefix, fontSize);
+        if (pWidth <= remainingWidth) {
+          lineBuffer.push({ text: prefix, fontObj: pFont });
+          remainingWidth -= pWidth;
+        }
+      }
+
+      for (const seg of segments) {
+        let text = seg.text;
+        while (text.length > 0) {
+          const w = seg.fontObj.widthOfTextAtSize(text, fontSize);
+          const currentUsed = lineBuffer.reduce((acc, s) => acc + s.fontObj.widthOfTextAtSize(s.text, fontSize), 0);
+          const avail = maxWidth - indent - currentUsed;
+          if (w <= avail) {
+            // fits entirely
+            lineBuffer.push({ text, fontObj: seg.fontObj });
+            text = '';
+          } else {
+            // needs split
+            const [fit, rest] = splitTextToFit(text, seg.fontObj, fontSize, avail);
+            if (fit.length === 0) {
+              // single character doesn't fit (force on next line)
+              flushLine();
+              continue;
+            }
+            lineBuffer.push({ text: fit, fontObj: seg.fontObj });
+            text = rest;
+            // flush and continue building next line
+            flushLine();
+          }
+        }
+      }
+
+      // flush remaining
+      flushLine();
+
+      // add paragraph spacing
+      yPosition -= lineHeight * 0.4;
+    }
   }
 
   // Add footer with conversion info
@@ -220,7 +349,7 @@ async function processor(files: File[]): Promise<ProcessResult> {
       x: margin,
       y: margin - 20,
       size: 8,
-      font,
+      font: regularFont,
       color: rgb(0.6, 0.6, 0.6),
     });
   });
@@ -242,5 +371,32 @@ async function processor(files: File[]): Promise<ProcessResult> {
 }
 
 export default function ConvertToPdf() {
-  return <ToolPage processor={processor} />;
+  async function wrappedProcessor(files: File[]) {
+    const file = files[0];
+
+    // DOCX uses the server for high-fidelity conversion.
+    if (file.name.toLowerCase().endsWith('.docx')) {
+      const serverUrl = 'http://localhost:3000/convert';
+      const form = new FormData();
+      form.append('file', file, file.name);
+
+      try {
+        const res = await fetch(serverUrl, { method: 'POST', body: form });
+        if (!res.ok) throw new Error(await res.text());
+        const blob = await res.blob();
+        return {
+          singleBlob: { blob, name: file.name.replace(/\.[^.]+$/, '.pdf') },
+          info: { source_file: file.name, method: 'LibreOffice server' },
+        };
+      } catch (error) {
+        throw new Error(
+          `DOCX conversion backend is unavailable. Start Docker with "docker compose up --build -d" and retry. ${error instanceof Error ? error.message : ''}`.trim(),
+        );
+      }
+    }
+
+    return processor(files);
+  }
+
+  return <ToolPage processor={wrappedProcessor} />;
 }

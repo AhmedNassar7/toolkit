@@ -1,0 +1,9 @@
+version: '3.8'
+services:
+  convert-service:
+    build: ./convert-service
+    ports:
+      - '3000:3000'
+    volumes:
+      - ./convert-service/uploads:/usr/src/app/uploads
+    restart: unless-stopped
