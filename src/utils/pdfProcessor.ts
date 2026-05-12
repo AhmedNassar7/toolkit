@@ -1,7 +1,7 @@
 import { PDFDocument, degrees, rgb } from 'pdf-lib';
 import { saveAs } from 'file-saver';
 
-export async function compressPdf(file: File): Promise<Blob> {
+export async function compressPdf(file: File | Blob): Promise<Blob> {
   const arrayBuffer = await file.arrayBuffer();
   const pdfDoc = await PDFDocument.load(arrayBuffer, { ignoreEncryption: true });
 
@@ -14,10 +14,10 @@ export async function compressPdf(file: File): Promise<Blob> {
   pdfDoc.setCreator('');
 
   const bytes = await pdfDoc.save();
-  return new Blob([bytes], { type: 'application/pdf' });
+  return new Blob([new Uint8Array(bytes)], { type: 'application/pdf' });
 }
 
-export async function mergePdfs(files: File[]): Promise<Blob> {
+export async function mergePdfs(files: (File | Blob)[]): Promise<Blob> {
   const mergedPdf = await PDFDocument.create();
 
   for (const file of files) {
@@ -28,10 +28,10 @@ export async function mergePdfs(files: File[]): Promise<Blob> {
   }
 
   const bytes = await mergedPdf.save();
-  return new Blob([bytes], { type: 'application/pdf' });
+  return new Blob([new Uint8Array(bytes)], { type: 'application/pdf' });
 }
 
-export async function splitPdf(file: File): Promise<Blob[]> {
+export async function splitPdf(file: File | Blob): Promise<Blob[]> {
   const arrayBuffer = await file.arrayBuffer();
   const pdfDoc = await PDFDocument.load(arrayBuffer, { ignoreEncryption: true });
   const pageCount = pdfDoc.getPageCount();
@@ -42,13 +42,13 @@ export async function splitPdf(file: File): Promise<Blob[]> {
     const [page] = await newPdf.copyPages(pdfDoc, [i]);
     newPdf.addPage(page);
     const bytes = await newPdf.save();
-    blobs.push(new Blob([bytes], { type: 'application/pdf' }));
+    blobs.push(new Blob([new Uint8Array(bytes)], { type: 'application/pdf' }));
   }
 
   return blobs;
 }
 
-export async function rotatePdf(file: File, rotationDegrees: number): Promise<Blob> {
+export async function rotatePdf(file: File | Blob, rotationDegrees: number): Promise<Blob> {
   const arrayBuffer = await file.arrayBuffer();
   const pdfDoc = await PDFDocument.load(arrayBuffer, { ignoreEncryption: true });
   const pages = pdfDoc.getPages();
@@ -56,11 +56,11 @@ export async function rotatePdf(file: File, rotationDegrees: number): Promise<Bl
     page.setRotation(degrees((page.getRotation().angle + rotationDegrees) % 360));
   });
   const bytes = await pdfDoc.save();
-  return new Blob([bytes], { type: 'application/pdf' });
+  return new Blob([new Uint8Array(bytes)], { type: 'application/pdf' });
 }
 
 export async function watermarkPdf(
-  file: File,
+  file: File | Blob,
   text: string,
   options?: { opacity?: number; fontSize?: number; color?: string }
 ): Promise<Blob> {
@@ -88,7 +88,7 @@ export async function watermarkPdf(
   }
 
   const bytes = await pdfDoc.save();
-  return new Blob([bytes], { type: 'application/pdf' });
+  return new Blob([new Uint8Array(bytes)], { type: 'application/pdf' });
 }
 
 function parseHexColor(color?: string) {
@@ -108,7 +108,7 @@ function parseHexColor(color?: string) {
   return rgb(red, green, blue);
 }
 
-export async function addPageNumbers(file: File): Promise<Blob> {
+export async function addPageNumbers(file: File | Blob): Promise<Blob> {
   const arrayBuffer = await file.arrayBuffer();
   const pdfDoc = await PDFDocument.load(arrayBuffer, { ignoreEncryption: true });
   const pages = pdfDoc.getPages();
@@ -129,20 +129,20 @@ export async function addPageNumbers(file: File): Promise<Blob> {
   });
 
   const bytes = await pdfDoc.save();
-  return new Blob([bytes], { type: 'application/pdf' });
+  return new Blob([new Uint8Array(bytes)], { type: 'application/pdf' });
 }
 
-export async function protectPdf(file: File, _password: string): Promise<Blob> {
+export async function protectPdf(file: File | Blob, _password: string): Promise<Blob> {
   // pdf-lib doesn't support encryption directly, so we return the PDF as-is
   // In production, this would use a server-side tool
   const arrayBuffer = await file.arrayBuffer();
   const pdfDoc = await PDFDocument.load(arrayBuffer, { ignoreEncryption: true });
   pdfDoc.setTitle('Protected Document');
   const bytes = await pdfDoc.save();
-  return new Blob([bytes], { type: 'application/pdf' });
+  return new Blob([new Uint8Array(bytes)], { type: 'application/pdf' });
 }
 
-export async function pdfToImages(file: File): Promise<Blob[]> {
+export async function pdfToImages(file: File | Blob): Promise<Blob[]> {
   const pdfjsLib = await import('pdfjs-dist');
   pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
     '/pdf.worker.min.mjs',
@@ -195,10 +195,10 @@ export async function imagesToPdf(files: File[]): Promise<Blob> {
   }
 
   const bytes = await pdfDoc.save();
-  return new Blob([bytes], { type: 'application/pdf' });
+  return new Blob([new Uint8Array(bytes)], { type: 'application/pdf' });
 }
 
-export async function getPdfInfo(file: File): Promise<{
+export async function getPdfInfo(file: File | Blob): Promise<{
   pages: number;
   size: string;
   title?: string;
