@@ -368,7 +368,7 @@ export const tools: Tool[] = [
     icon: QrCode,
     category: 'convert',
     color: '#3498db',
-    acceptTypes: '.png,.jpg,.jpeg,.gif,.webp',
+    acceptTypes: 'image/png,image/jpeg,image/gif,image/webp',
     outputLabel: 'QR Result',
   },
 ];

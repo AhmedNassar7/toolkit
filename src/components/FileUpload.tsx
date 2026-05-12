@@ -35,12 +35,25 @@ export default function FileUpload({
         return { valid: [], error: `Maximum ${maxFiles} files allowed` };
       }
 
-      const acceptExts = accept.split(',').map((s) => s.trim().toLowerCase());
+      const acceptTypes = accept.split(',').map((s) => s.trim().toLowerCase());
       const valid: File[] = [];
 
       for (const file of arr) {
         const ext = '.' + file.name.split('.').pop()?.toLowerCase();
-        if (!acceptExts.includes(ext)) {
+        const mime = file.type.toLowerCase();
+        const matchesType = acceptTypes.some((type) => {
+          if (type.startsWith('.')) {
+            return type === ext;
+          }
+
+          if (type.endsWith('/*')) {
+            return mime.startsWith(type.slice(0, -1));
+          }
+
+          return type === mime;
+        });
+
+        if (!matchesType) {
           return { valid: [], error: `File type "${ext}" is not supported. Accepted: ${accept}` };
         }
         if (file.size > maxSizeMB * 1024 * 1024) {

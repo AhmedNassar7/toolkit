@@ -103,8 +103,7 @@ function QrGenerator({ options, setOptions }: QrGeneratorProps) {
     setIsGenerating(true);
     setError(null);
     try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const QRCodeModule = (await import('qrcode')) as any;
+      const QRCodeModule = await import('qrcode');
       const QRCode = QRCodeModule.default;
       const canvas = document.createElement('canvas');
       await QRCode.toCanvas(canvas, text, { width: 300 });

@@ -1,9 +1,5 @@
 import { PDFDocument, degrees, rgb } from 'pdf-lib';
 import { saveAs } from 'file-saver';
-import * as pdfjsLib from 'pdfjs-dist';
-
-// Configure pdfjs worker
-pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs';
 
 // Sanitize text for WinAnsi compatibility
 function sanitizeText(text: string): string {
@@ -177,6 +173,11 @@ export async function protectPdf(file: File | Blob, _password: string): Promise<
 
 export async function pdfToImages(file: File | Blob): Promise<Blob[]> {
   const arrayBuffer = await file.arrayBuffer();
+  const pdfjsLib = await import('pdfjs-dist');
+
+  // Configure pdfjs worker when running in the browser.
+  pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs';
+
   const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) }).promise;
   const blobs: Blob[] = [];
 
