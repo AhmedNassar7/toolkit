@@ -50,8 +50,10 @@ app.post('/convert', upload.single('file'), (req, res) => {
   const profileDir = fs.mkdtempSync(path.join(os.tmpdir(), 'toolkit-lo-profile-'));
   const profileUrl = pathToFileURL(profileDir).href;
 
-  // Run soffice to convert
+  // Run soffice to convert with font embedding enabled
   const soffice = process.env.SOFFICE_BIN || 'soffice';
+  // PDF export options with font embedding
+  const pdfExportOptions = 'pdf:writer_pdf_Export:{"EmbedStandardFonts":true,"UseTaggedPDF":true}';
   const args = [
     '--headless',
     '--nologo',
@@ -61,7 +63,7 @@ app.post('/convert', upload.single('file'), (req, res) => {
     '--norestore',
     `-env:UserInstallation=${profileUrl}`,
     '--convert-to',
-    'pdf:writer_pdf_Export',
+    pdfExportOptions,
     '--outdir',
     outputDir,
     inputPath,

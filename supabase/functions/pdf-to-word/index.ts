@@ -1,4 +1,11 @@
 import PdfParse from "npm:pdf-parse@1.1.1";
+import * as PDFJS from "npm:pdfjs-dist@4.0.269";
+import * as docx from "npm:docx@8.12.2";
+import { Buffer } from "node:buffer";
+
+declare const Deno: {
+  serve: (handler: (req: Request) => Response | Promise<Response>) => void;
+};
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -6,108 +13,225 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey",
 };
 
-function createWordDoc(title: string, paragraphs: string[]): string {
-  const escapedParagraphs = paragraphs.map((line) => {
-    if (line === "\f") {
-      return '<br style="page-break-after:always">';
+// Set up PDF.js worker
+PDFJS.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${PDFJS.version}/pdf.worker.min.js`;
+
+interface TextItem {
+  str: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+interface PageLayout {
+  items: TextItem[];
+}
+
+async function extractPdfWithLayout(uint8: Uint8Array): Promise<PageLayout[]> {
+  const pdf = await PDFJS.getDocument({ data: uint8 }).promise;
+  const pages: PageLayout[] = [];
+
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page = await pdf.getPage(i);
+    const textContent = await page.getTextContent();
+    const items: TextItem[] = (textContent.items as any[])
+      .filter((item) => item.str && item.str.trim())
+      .map((item) => ({
+        str: item.str,
+        x: item.transform[4],
+        y: item.transform[5],
+        width: item.width,
+        height: item.height,
+      }));
+
+    pages.push({ items });
+  }
+
+  return pages;
+}
+
+function detectTables(pageItems: TextItem[]): TextItem[][] {
+  if (pageItems.length < 2) return [pageItems];
+
+  // Sort by Y position (top to bottom), then X (left to right)
+  const sorted = [...pageItems].sort((a, b) => {
+    const yDiff = Math.abs(b.y - a.y);
+    if (yDiff > 10) return b.y - a.y;
+    return a.x - b.x;
+  });
+
+  // Group items by approximate Y position (within 15 units)
+  const rows: TextItem[][] = [];
+  let currentRow: TextItem[] = [];
+
+  sorted.forEach((item) => {
+    if (
+      currentRow.length === 0 ||
+      Math.abs(item.y - currentRow[0].y) < 15
+    ) {
+      currentRow.push(item);
+    } else {
+      rows.push(currentRow);
+      currentRow = [item];
     }
-    const escaped = line
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;");
-    return `<p style="margin:0 0 6pt 0;line-height:1.5;font-family:Calibri,sans-serif;font-size:11pt">${escaped}</p>`;
   });
 
-  return `<html xmlns:o="urn:schemas-microsoft-com:office:office"
-      xmlns:w="urn:schemas-microsoft-com:office:word"
-      xmlns="http://www.w3.org/TR/REC-html40">
-<head>
-  <meta charset="utf-8">
-  <title>${title}</title>
-  <!--[if gte mso 9]>
-  <xml>
-    <w:WordDocument>
-      <w:View>Print</w:View>
-      <w:Zoom>100</w:Zoom>
-      <w:DoNotOptimizeForBrowser/>
-    </w:WordDocument>
-  </xml>
-  <![endif]-->
-  <style>
-    @page { margin: 2.54cm; }
-    body { font-family: Calibri, sans-serif; font-size: 11pt; }
-    p { margin: 0 0 6pt 0; line-height: 1.5; }
-  </style>
-</head>
-<body>
-  ${escapedParagraphs.join("\n")}
-</body>
-</html>`;
+  if (currentRow.length) rows.push(currentRow);
+
+  return rows;
 }
 
-function createPptDoc(title: string, slides: string[][]): string {
-  const slideHtml = slides.map((lines, i) => {
-    const bullets = lines
-      .filter((l) => l.trim())
-      .map((l) => `    <li>${l.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")}</li>`)
-      .join("\n");
-    return `<div class="slide">
-  <h2>Page ${i + 1}</h2>
-  <ul>
-${bullets}
-  </ul>
-</div>`;
+function createWordDoc(
+  title: string,
+  pages: PageLayout[]
+): Buffer {
+  const sections: docx.ISectionOptions[] = [];
+
+  pages.forEach((page, pageIdx) => {
+    const elements: docx.ParagraphLike[] = [];
+
+    // Add page title
+    if (pageIdx === 0) {
+      elements.push(
+        new docx.Paragraph({
+          text: title,
+          heading: docx.HeadingLevel.HEADING_1,
+          spacing: { after: 200 },
+        })
+      );
+    }
+
+    // Detect and create tables from layout
+    const rows = detectTables(page.items);
+
+    if (rows.length > 1 && rows.some((r) => r.length > 1)) {
+      // Likely a table
+      const tableRows = rows.map(
+        (row) =>
+          new docx.TableRow({
+            cells: row.map(
+              (item) =>
+                new docx.TableCell({
+                  children: [
+                    new docx.Paragraph({
+                      text: item.str,
+                      spacing: { after: 0 },
+                    }),
+                  ],
+                })
+            ),
+          })
+      );
+
+      elements.push(
+        new docx.Table({
+          rows: tableRows,
+          width: { size: 100, type: docx.WidthType.PERCENTAGE },
+        })
+      );
+    } else {
+      // Regular text
+      page.items.forEach((item) => {
+        elements.push(
+          new docx.Paragraph({
+            text: item.str,
+            spacing: { line: 280 },
+          })
+        );
+      });
+    }
+
+    // Add page break if not last page
+    if (pageIdx < pages.length - 1) {
+      elements.push(new docx.Paragraph({ pageBreakBefore: true }));
+    }
+
+    sections.push({
+      children: elements,
+    });
   });
 
-  return `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <title>${title}</title>
-  <style>
-    @page { margin: 1cm; size: landscape; }
-    body { font-family: Calibri, sans-serif; }
-    .slide { page-break-after: always; padding: 2cm; }
-    .slide h2 { font-size: 24pt; margin-bottom: 12pt; color: #333; }
-    .slide ul { font-size: 18pt; line-height: 1.6; }
-    .slide li { margin-bottom: 6pt; }
-  </style>
-</head>
-<body>
-${slideHtml.join("\n")}
-</body>
-</html>`;
+  const doc = new docx.Document({
+    sections: [{ children: sections.flatMap((s) => s.children) }],
+  });
+
+  return docx.Packer.toBuffer(doc);
 }
 
-function createXlsDoc(rows: string[]): string {
-  const tableRows = rows
-    .filter((r) => r.trim() && r !== "\f")
-    .map((row) => {
-      const cells = row.split(/\s{2,}|\t/).filter((c) => c.trim());
-      const tds = cells
-        .map((c) => `<td>${c.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")}</td>`)
-        .join("");
-      return `<tr>${tds}</tr>`;
+function createPptDoc(
+  title: string,
+  pages: PageLayout[]
+): Buffer {
+  const sections: docx.ParagraphLike[] = [];
+
+  pages.forEach((page, pageIdx) => {
+    sections.push(
+      new docx.Paragraph({
+        text: `Slide ${pageIdx + 1}`,
+        heading: docx.HeadingLevel.HEADING_2,
+        spacing: { before: 200, after: 100 },
+      })
+    );
+
+    page.items.forEach((item) => {
+      sections.push(
+        new docx.Paragraph({
+          text: item.str,
+          bullet: { level: 0 },
+          spacing: { line: 240, after: 100 },
+        })
+      );
     });
 
-  return `<html xmlns:o="urn:schemas-microsoft-com:office:office"
-xmlns:x="urn:schemas-microsoft-com:office:excel">
-<head>
-  <meta charset="utf-8">
-  <!--[if gte mso 9]><xml>
-  <x:ExcelWorkbook>
-    <x:ExcelWorksheets>
-      <x:ExcelWorksheet>
-        <x:Name>Sheet1</x:Name>
-      </x:ExcelWorksheet>
-    </x:ExcelWorksheets>
-  </x:ExcelWorkbook>
-  </xml><![endif]-->
-</head>
-<body>
-  <table>${tableRows.join("\n")}</table>
-</body>
-</html>`;
+    if (pageIdx < pages.length - 1) {
+      sections.push(new docx.Paragraph({ pageBreakBefore: true }));
+    }
+  });
+
+  const doc = new docx.Document({
+    sections: [{ children: sections }],
+  });
+
+  return docx.Packer.toBuffer(doc);
+}
+
+function createXlsDoc(pages: PageLayout[]): Buffer {
+  const rows = pages.flatMap((page) =>
+    detectTables(page.items)
+  );
+
+  const tableRows = rows.map(
+    (row) =>
+      new docx.TableRow({
+        cells: row.map(
+          (item) =>
+            new docx.TableCell({
+              children: [
+                new docx.Paragraph({
+                  text: item.str,
+                  spacing: { after: 0 },
+                }),
+              ],
+            })
+        ),
+      })
+  );
+
+  const doc = new docx.Document({
+    sections: [
+      {
+        children: [
+          new docx.Table({
+            rows: tableRows,
+            width: { size: 100, type: docx.WidthType.PERCENTAGE },
+          }),
+        ],
+      },
+    ],
+  });
+
+  return docx.Packer.toBuffer(doc);
 }
 
 Deno.serve(async (req: Request) => {
@@ -131,63 +255,43 @@ Deno.serve(async (req: Request) => {
     const uint8 = new Uint8Array(arrayBuffer);
     const baseName = file.name.replace(/\.pdf$/i, "");
 
-    // Use pdf-parse to extract text
-    const data = await PdfParse(uint8);
-    const fullText = data.text || "";
+    // Extract PDF with layout preservation
+    const pages = await extractPdfWithLayout(uint8);
 
-    // Split text into pages using form feed character
-    const pageTexts = fullText.split("\f").filter((p: string) => p.trim());
-
-    // If no page breaks found, treat entire text as one page
-    const pages: string[][] = pageTexts.length > 0
-      ? pageTexts.map((p: string) => p.split("\n").filter((l: string) => l.trim()))
-      : fullText.split("\n").filter((l: string) => l.trim()).length > 0
-        ? [fullText.split("\n").filter((l: string) => l.trim())]
-        : [["No text content found in PDF"]];
-
-    // Build all lines with page breaks
-    const allLines: string[] = [];
-    for (let i = 0; i < pages.length; i++) {
-      allLines.push(...pages[i]);
-      if (i < pages.length - 1) {
-        allLines.push("\f");
-      }
+    if (!pages || pages.length === 0) {
+      throw new Error("Could not extract content from PDF");
     }
 
     // Generate the appropriate output format
+    let buffer: Buffer;
+    let contentType: string;
+    let ext: string;
+
     if (format === "pptx") {
-      const html = createPptDoc(baseName, pages);
-      return new Response(html, {
-        headers: {
-          ...corsHeaders,
-          "Content-Type": "application/vnd.ms-powerpoint",
-          "Content-Disposition": `attachment; filename="${baseName}.ppt"`,
-        },
-      });
+      buffer = createPptDoc(baseName, pages);
+      contentType = "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+      ext = ".pptx";
+    } else if (format === "xlsx") {
+      buffer = createXlsDoc(pages);
+      contentType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+      ext = ".xlsx";
+    } else {
+      // Default: Word document (.docx)
+      buffer = createWordDoc(baseName, pages);
+      contentType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+      ext = ".docx";
     }
 
-    if (format === "xlsx") {
-      const html = createXlsDoc(allLines);
-      return new Response(html, {
-        headers: {
-          ...corsHeaders,
-          "Content-Type": "application/vnd.ms-excel",
-          "Content-Disposition": `attachment; filename="${baseName}.xls"`,
-        },
-      });
-    }
-
-    // Default: Word document (.doc)
-    const html = createWordDoc(baseName, allLines);
-    return new Response(html, {
+    return new Response(buffer, {
       headers: {
         ...corsHeaders,
-        "Content-Type": "application/msword",
-        "Content-Disposition": `attachment; filename="${baseName}.doc"`,
+        "Content-Type": contentType,
+        "Content-Disposition": `attachment; filename="${baseName}${ext}"`,
       },
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
+    console.error("PDF conversion error:", message);
     return new Response(
       JSON.stringify({ error: message }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
