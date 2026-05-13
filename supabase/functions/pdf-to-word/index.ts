@@ -82,6 +82,66 @@ function detectTables(pageItems: TextItem[]): TextItem[][] {
   return rows;
 }
 
+function groupLines(items: TextItem[], xGapThreshold = 8, yThreshold = 15) {
+  // Group by approximate Y position into lines
+  const sorted = [...items].sort((a, b) => b.y - a.y || a.x - b.x);
+  const lines: { y: number; items: TextItem[] }[] = [];
+
+  sorted.forEach((it) => {
+    const line = lines.find((l) => Math.abs(l.y - it.y) < yThreshold);
+    if (line) {
+      line.items.push(it);
+    } else {
+      lines.push({ y: it.y, items: [it] });
+    }
+  });
+
+  // Sort items within lines by X and merge nearby items into words
+  return lines.map((l) => ({
+    y: l.y,
+    items: l.items.sort((a, b) => a.x - b.x),
+  }));
+}
+
+function buildTableFromRows(rows: TextItem[][]) {
+  // Determine column x positions by inspecting first few rows
+  const xs: number[] = [];
+  rows.forEach((row) => {
+    row.forEach((cell) => {
+      xs.push(cell.x);
+    });
+  });
+  if (xs.length === 0) return null;
+  // cluster xs into columns
+  xs.sort((a, b) => a - b);
+  const cols: number[] = [xs[0]];
+  const colGap = 20; // threshold to start a new column
+  xs.forEach((x) => {
+    if (Math.abs(x - cols[cols.length - 1]) > colGap) cols.push(x);
+  });
+
+  const table: string[][] = rows.map((row) => {
+    const cells = cols.map(() => "");
+    row.forEach((item) => {
+      // find nearest column
+      let bestIdx = 0;
+      let bestDist = Infinity;
+      cols.forEach((cx, idx) => {
+        const d = Math.abs(item.x - cx);
+        if (d < bestDist) {
+          bestDist = d;
+          bestIdx = idx;
+        }
+      });
+      if (cells[bestIdx]) cells[bestIdx] += " " + item.str.trim();
+      else cells[bestIdx] = item.str.trim();
+    });
+    return cells.map((c) => c.trim());
+  });
+
+  return { cols, table };
+}
+
 function createWordDoc(
   title: string,
   pages: PageLayout[]
@@ -102,24 +162,23 @@ function createWordDoc(
       );
     }
 
-    // Detect and create tables from layout
-    const rows = detectTables(page.items);
+    // Group items into lines to better reconstruct paragraphs
+    const lines = groupLines(page.items);
 
-    if (rows.length > 1 && rows.some((r) => r.length > 1)) {
-      // Likely a table
-      const tableRows = rows.map(
-        (row) =>
+    // Try detect tables from raw items
+    const rows = detectTables(page.items);
+    const maybeTable = rows.length > 1 && rows.some((r) => r.length > 1) ? buildTableFromRows(rows) : null;
+
+    if (maybeTable && maybeTable.table.length > 0) {
+      const tableRows = maybeTable.table.map(
+        (r) =>
           new docx.TableRow({
-            cells: row.map(
-              (item) =>
-                new docx.TableCell({
-                  children: [
-                    new docx.Paragraph({
-                      text: item.str,
-                      spacing: { after: 0 },
-                    }),
-                  ],
-                })
+            cells: r.map((cellText) =>
+              new docx.TableCell({
+                children: [
+                  new docx.Paragraph({ text: cellText }),
+                ],
+              })
             ),
           })
       );
@@ -131,11 +190,37 @@ function createWordDoc(
         })
       );
     } else {
-      // Regular text
-      page.items.forEach((item) => {
+      // Build paragraphs by joining lines, adding paragraph breaks for larger vertical gaps
+      const mergedParagraphs: string[] = [];
+      let currentPara = "";
+      let lastY: number | null = null;
+
+      for (const line of lines) {
+        const lineText = line.items.map((it, idx) => {
+          // Add a space if next item is sufficiently far from previous
+          return it.str;
+        }).join(" ");
+
+        if (lastY === null) {
+          currentPara = lineText;
+        } else {
+          // if gap between lastY and current line is large, start new paragraph
+          if (Math.abs(lastY - line.y) > 20) {
+            mergedParagraphs.push(currentPara.trim());
+            currentPara = lineText;
+          } else {
+            currentPara += " " + lineText;
+          }
+        }
+        lastY = line.y;
+      }
+
+      if (currentPara.trim()) mergedParagraphs.push(currentPara.trim());
+
+      mergedParagraphs.forEach((p) => {
         elements.push(
           new docx.Paragraph({
-            text: item.str,
+            text: p,
             spacing: { line: 280 },
           })
         );
@@ -282,7 +367,10 @@ Deno.serve(async (req: Request) => {
       ext = ".docx";
     }
 
-    return new Response(buffer, {
+    // Convert Node Buffer to an ArrayBuffer view compatible with the web Response body
+    const responseBuffer = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
+
+    return new Response(responseBuffer, {
       headers: {
         ...corsHeaders,
         "Content-Type": contentType,
