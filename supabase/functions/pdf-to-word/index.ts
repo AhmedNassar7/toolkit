@@ -1,6 +1,4 @@
-import PdfParse from "npm:pdf-parse@1.1.1";
-import * as PDFJS from "npm:pdfjs-dist@4.0.269";
-import * as docx from "npm:docx@8.12.2";
+import * as docx from "npm:docx";
 import { Buffer } from "node:buffer";
 
 declare const Deno: {
@@ -13,8 +11,34 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Client-Info, Apikey",
 };
 
+const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
+
+function sanitizeBaseName(name: string) {
+  return name.replace(/[^a-z0-9_.\- \(\)]/gi, '_').replace(/\s+/g, '_');
+}
+
+class MinimalDOMMatrix {
+  constructor(_init?: unknown) {}
+  multiplySelf() { return this; }
+  preMultiplySelf() { return this; }
+  translateSelf() { return this; }
+  scaleSelf() { return this; }
+  rotateSelf() { return this; }
+  skewXSelf() { return this; }
+  skewYSelf() { return this; }
+  invertSelf() { return this; }
+  toFloat64Array() { return new Float64Array(16); }
+}
+
+if (typeof globalThis.DOMMatrix === "undefined") {
+  (globalThis as any).DOMMatrix = MinimalDOMMatrix;
+  (globalThis as any).DOMMatrixReadOnly = MinimalDOMMatrix;
+}
+
+const PDFJS = await import("npm:pdfjs-dist/legacy/build/pdf.mjs");
+
 // Set up PDF.js worker
-PDFJS.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${PDFJS.version}/pdf.worker.min.js`;
+PDFJS.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${PDFJS.version}/pdf.worker.min.mjs`;
 
 interface TextItem {
   str: string;
@@ -142,10 +166,10 @@ function buildTableFromRows(rows: TextItem[][]) {
   return { cols, table };
 }
 
-function createWordDoc(
+async function createWordDoc(
   title: string,
   pages: PageLayout[]
-): Buffer {
+): Promise<Buffer> {
   const sections: docx.ISectionOptions[] = [];
 
   pages.forEach((page, pageIdx) => {
@@ -241,13 +265,13 @@ function createWordDoc(
     sections: [{ children: sections.flatMap((s) => s.children) }],
   });
 
-  return docx.Packer.toBuffer(doc);
+  return await docx.Packer.toBuffer(doc);
 }
 
-function createPptDoc(
+async function createPptDoc(
   title: string,
   pages: PageLayout[]
-): Buffer {
+): Promise<Buffer> {
   const sections: docx.ParagraphLike[] = [];
 
   pages.forEach((page, pageIdx) => {
@@ -278,10 +302,10 @@ function createPptDoc(
     sections: [{ children: sections }],
   });
 
-  return docx.Packer.toBuffer(doc);
+  return await docx.Packer.toBuffer(doc);
 }
 
-function createXlsDoc(pages: PageLayout[]): Buffer {
+async function createXlsDoc(pages: PageLayout[]): Promise<Buffer> {
   const rows = pages.flatMap((page) =>
     detectTables(page.items)
   );
@@ -316,7 +340,7 @@ function createXlsDoc(pages: PageLayout[]): Buffer {
     ],
   });
 
-  return docx.Packer.toBuffer(doc);
+  return await docx.Packer.toBuffer(doc);
 }
 
 Deno.serve(async (req: Request) => {
@@ -336,9 +360,25 @@ Deno.serve(async (req: Request) => {
       );
     }
 
+    // Basic validations
+    if (file.size > MAX_FILE_SIZE) {
+      return new Response(
+        JSON.stringify({ error: `File too large (max ${MAX_FILE_SIZE} bytes)` }),
+        { status: 413, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    if (!/\.pdf$/i.test(file.name) && file.type !== 'application/pdf') {
+      return new Response(
+        JSON.stringify({ error: 'Invalid file type, expected PDF' }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
     const arrayBuffer = await file.arrayBuffer();
     const uint8 = new Uint8Array(arrayBuffer);
-    const baseName = file.name.replace(/\.pdf$/i, "");
+    const baseNameRaw = file.name.replace(/\.pdf$/i, "");
+    const baseName = sanitizeBaseName(baseNameRaw);
 
     // Extract PDF with layout preservation
     const pages = await extractPdfWithLayout(uint8);
@@ -353,28 +393,44 @@ Deno.serve(async (req: Request) => {
     let ext: string;
 
     if (format === "pptx") {
-      buffer = createPptDoc(baseName, pages);
+      buffer = await createPptDoc(baseName, pages);
       contentType = "application/vnd.openxmlformats-officedocument.presentationml.presentation";
       ext = ".pptx";
     } else if (format === "xlsx") {
-      buffer = createXlsDoc(pages);
+      buffer = await createXlsDoc(pages);
       contentType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
       ext = ".xlsx";
     } else {
       // Default: Word document (.docx)
-      buffer = createWordDoc(baseName, pages);
+      buffer = await createWordDoc(baseName, pages);
       contentType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
       ext = ".docx";
     }
 
-    // Convert Node Buffer to an ArrayBuffer view compatible with the web Response body
-    const responseBuffer = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
+    // Convert Node Buffer to a Uint8Array and add Content-Length for clarity
+    const outUint8 = new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength);
 
-    return new Response(responseBuffer, {
+    // Log first bytes for debugging (hex) only if DEBUG env var is set
+    try {
+      if (typeof Deno !== 'undefined' && (Deno.env.get('DEBUG') === 'true')) {
+        const preview = Array.from(outUint8.slice(0, 8)).map((b) => b.toString(16).padStart(2, '0')).join(' ');
+        console.log(`Generated ${ext} size=${outUint8.byteLength} preview=${preview}`);
+      }
+    } catch (e) {
+      // swallow logging errors in production
+    }
+
+    // Use a safe Content-Disposition with RFC5987 filename* encoding
+    const filename = `${baseName}${ext}`;
+    const disposition = `attachment; filename="${filename}"; filename*=UTF-8''${encodeURIComponent(filename)}`;
+
+    return new Response(outUint8, {
       headers: {
         ...corsHeaders,
         "Content-Type": contentType,
-        "Content-Disposition": `attachment; filename="${baseName}${ext}"`,
+        "Content-Disposition": disposition,
+        "Content-Length": String(outUint8.byteLength),
+        "X-Content-Type-Options": "nosniff",
       },
     });
   } catch (err) {

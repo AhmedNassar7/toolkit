@@ -11,9 +11,9 @@ const formatMap: Record<string, string> = {
 };
 
 const extMap: Record<string, string> = {
-  docx: '.doc',
-  pptx: '.ppt',
-  xlsx: '.xls',
+  docx: '.docx',
+  pptx: '.pptx',
+  xlsx: '.xlsx',
 };
 
 async function processor(files: File[], _options?: Record<string, unknown>, toolId?: string): Promise<ProcessResult> {

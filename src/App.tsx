@@ -8,7 +8,7 @@ import ToolRouter from './pages/ToolRouter';
 export default function App() {
   return (
     <ThemeProvider>
-      <BrowserRouter>
+      <BrowserRouter basename="/toolkit">
         <div className="min-h-screen flex flex-col bg-white dark:bg-gray-950 transition-colors duration-200">
           <Header />
           <main className="flex-1">
