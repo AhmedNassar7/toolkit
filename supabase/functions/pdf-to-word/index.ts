@@ -1,4 +1,5 @@
 import * as docx from "npm:docx";
+import { getDocumentProxy } from "npm:unpdf@1.6.2";
 import { Buffer } from "node:buffer";
 
 declare const Deno: {
@@ -35,11 +36,6 @@ if (typeof globalThis.DOMMatrix === "undefined") {
   (globalThis as any).DOMMatrixReadOnly = MinimalDOMMatrix;
 }
 
-const PDFJS = await import("npm:pdfjs-dist/legacy/build/pdf.mjs");
-
-// Set up PDF.js worker
-PDFJS.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${PDFJS.version}/pdf.worker.min.mjs`;
-
 interface TextItem {
   str: string;
   x: number;
@@ -53,7 +49,7 @@ interface PageLayout {
 }
 
 async function extractPdfWithLayout(uint8: Uint8Array): Promise<PageLayout[]> {
-  const pdf = await PDFJS.getDocument({ data: uint8 }).promise;
+  const pdf = await getDocumentProxy(uint8);
   const pages: PageLayout[] = [];
 
   for (let i = 1; i <= pdf.numPages; i++) {
