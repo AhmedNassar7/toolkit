@@ -22,10 +22,9 @@ export default function HomePage() {
     let result = activeCategory ? getToolsByCategory(activeCategory) : tools;
     if (search.trim()) {
       const q = search.toLowerCase();
-      result = result.filter(
-        (t) =>
-          t.name.toLowerCase().includes(q) || t.description.toLowerCase().includes(q)
-      );
+      result = result
+        .filter((t) => t.name.toLowerCase().includes(q) || t.description.toLowerCase().includes(q))
+        .sort((a, b) => Number(!!a.comingSoon) - Number(!!b.comingSoon));
     }
     return result;
   }, [activeCategory, search]);

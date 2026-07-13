@@ -43,6 +43,8 @@ export interface Tool {
   color: string;
   acceptTypes: string;
   outputLabel: string;
+  /** Tool isn't implemented yet - shown with a "Coming Soon" badge instead of pretending it works. */
+  comingSoon?: boolean;
 }
 
 export const categories: Record<ToolCategory, { label: string; description: string }> = {
@@ -136,6 +138,7 @@ export const tools: Tool[] = [
     color: '#27ae60',
     acceptTypes: '.pdf',
     outputLabel: 'PDF/A File',
+    comingSoon: true,
   },
   // Convert
   {
@@ -238,6 +241,7 @@ export const tools: Tool[] = [
     color: '#f39c12',
     acceptTypes: '.pdf',
     outputLabel: 'Edited PDF',
+    comingSoon: true,
   },
   {
     id: 'sign-pdf',
@@ -248,6 +252,7 @@ export const tools: Tool[] = [
     color: '#f39c12',
     acceptTypes: '.pdf',
     outputLabel: 'Signed PDF',
+    comingSoon: true,
   },
   {
     id: 'watermark',
@@ -278,6 +283,7 @@ export const tools: Tool[] = [
     color: '#f39c12',
     acceptTypes: '.pdf',
     outputLabel: 'Filled PDF',
+    comingSoon: true,
   },
   // Security
   {
@@ -309,6 +315,7 @@ export const tools: Tool[] = [
     color: '#8e44ad',
     acceptTypes: '.pdf',
     outputLabel: 'Redacted PDF',
+    comingSoon: true,
   },
   // Intelligence
   {
@@ -330,6 +337,7 @@ export const tools: Tool[] = [
     color: '#1abc9c',
     acceptTypes: '.pdf',
     outputLabel: 'OCR PDF',
+    comingSoon: true,
   },
   {
     id: 'compare-pdf',
@@ -340,6 +348,7 @@ export const tools: Tool[] = [
     color: '#1abc9c',
     acceptTypes: '.pdf',
     outputLabel: 'Comparison Report',
+    comingSoon: true,
   },
   {
     id: 'ai-summarizer',
@@ -350,6 +359,7 @@ export const tools: Tool[] = [
     color: '#1abc9c',
     acceptTypes: '.pdf',
     outputLabel: 'Summary',
+    comingSoon: true,
   },
   {
     id: 'translate-pdf',
@@ -360,6 +370,7 @@ export const tools: Tool[] = [
     color: '#1abc9c',
     acceptTypes: '.pdf',
     outputLabel: 'Translated PDF',
+    comingSoon: true,
   },
   {
     id: 'qr-code',
@@ -378,5 +389,7 @@ export function getToolById(id: string): Tool | undefined {
 }
 
 export function getToolsByCategory(category: ToolCategory): Tool[] {
-  return tools.filter((t) => t.category === category);
+  return tools
+    .filter((t) => t.category === category)
+    .sort((a, b) => Number(!!a.comingSoon) - Number(!!b.comingSoon));
 }
