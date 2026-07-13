@@ -1,5 +1,5 @@
-import { describe, expect, it, beforeEach } from 'vitest';
-import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
+import { describe, expect, it } from 'vitest';
+import { PDFDocument, StandardFonts, rgb } from 'pdf-lib-with-encrypt';
 import {
   addPageNumbers,
   compressPdf,
@@ -9,7 +9,7 @@ import {
   splitPdf,
   watermarkPdf,
   protectPdf,
-  imagesToPdf,
+  unlockPdf,
 } from '../src/utils/pdfProcessor';
 
 async function createSamplePdf(pageCount: number, metadata?: { title?: string; author?: string }) {
@@ -422,46 +422,50 @@ describe('pdfProcessor', () => {
     });
   });
 
-  // ============ PROTECT PDF TESTS ============
+  // ============ PROTECT / UNLOCK PDF TESTS ============
   describe('protectPdf', () => {
-    it('processes PDF with protection flag', async () => {
+    it('rejects loading without a password', async () => {
       const source = await createSamplePdf(1);
-
       const protected_ = await protectPdf(source, 'password123');
-      const pdf = await loadPdf(protected_);
 
-      expect(pdf.getPageCount()).toBe(1);
+      await expect(PDFDocument.load(await protected_.arrayBuffer())).rejects.toThrow();
     });
 
-    it('marks PDF as protected', async () => {
+    it('rejects the wrong password', async () => {
       const source = await createSamplePdf(1);
+      const protected_ = await protectPdf(source, 'password123');
 
-      const protected_ = await protectPdf(source, 'secret');
-      const pdf = await loadPdf(protected_);
-
-      expect(pdf.getTitle()).toBe('Protected Document');
+      await expect(
+        PDFDocument.load(await protected_.arrayBuffer(), { password: 'wrong-password' })
+      ).rejects.toThrow();
     });
 
-    it('preserves page content in protected PDF', async () => {
+    it('opens with the correct password and preserves page count', async () => {
       const source = await createSamplePdf(3);
+      const protected_ = await protectPdf(source, 'correct-password');
 
-      const protected_ = await protectPdf(source, 'pass');
-      const pdf = await loadPdf(protected_);
-
+      const pdf = await PDFDocument.load(await protected_.arrayBuffer(), { password: 'correct-password' });
       expect(pdf.getPageCount()).toBe(3);
     });
   });
 
-  // ============ IMAGES TO PDF TESTS ============
-  describe('imagesToPdf', () => {
-    it.skip('creates PDF from image files', async () => {
-      // Skipped: requires browser canvas API
-      // In production, this would be tested in an integration/E2E environment
+  describe('unlockPdf', () => {
+    it('removes protection given the correct password', async () => {
+      const source = await createSamplePdf(2);
+      const protected_ = await protectPdf(source, 'correct-password');
+
+      const unlocked = await unlockPdf(protected_, 'correct-password');
+
+      // The unlocked file must open with zero password, unlike the protected one.
+      const pdf = await PDFDocument.load(await unlocked.arrayBuffer());
+      expect(pdf.getPageCount()).toBe(2);
     });
 
-    it.skip('creates multi-page PDF from multiple images', async () => {
-      // Skipped: requires browser canvas API
-      // In production, this would be tested in an integration/E2E environment
+    it('throws on an incorrect password', async () => {
+      const source = await createSamplePdf(1);
+      const protected_ = await protectPdf(source, 'correct-password');
+
+      await expect(unlockPdf(protected_, 'wrong-password')).rejects.toThrow();
     });
   });
 

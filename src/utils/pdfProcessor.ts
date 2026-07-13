@@ -1,4 +1,4 @@
-import { PDFDocument, degrees, rgb } from 'pdf-lib';
+import { PDFDocument, degrees, rgb } from 'pdf-lib-with-encrypt';
 import { saveAs } from 'file-saver';
 
 // Sanitize text for WinAnsi compatibility
@@ -42,6 +42,59 @@ export async function compressPdf(file: File | Blob): Promise<Blob> {
   pdfDoc.setCreator('');
 
   const bytes = await pdfDoc.save();
+  return new Blob([new Uint8Array(bytes)], { type: 'application/pdf' });
+}
+
+export async function repairPdf(file: File | Blob): Promise<Blob> {
+  // Leniently re-parse the document (tolerating malformed objects/xref tables)
+  // and re-save it with a freshly rebuilt structure. This is the same technique
+  // most "PDF repair" tools use for recovering non-corrupt-at-the-byte-level PDFs.
+  const arrayBuffer = await file.arrayBuffer();
+  const pdfDoc = await PDFDocument.load(arrayBuffer, {
+    ignoreEncryption: true,
+    throwOnInvalidObject: false,
+    updateMetadata: true,
+  });
+  const bytes = await pdfDoc.save();
+  return new Blob([new Uint8Array(bytes)], { type: 'application/pdf' });
+}
+
+export async function cropPdf(
+  file: File | Blob,
+  margins: { top: number; bottom: number; left: number; right: number }
+): Promise<Blob> {
+  const arrayBuffer = await file.arrayBuffer();
+  const pdfDoc = await PDFDocument.load(arrayBuffer, { ignoreEncryption: true });
+  const pages = pdfDoc.getPages();
+
+  for (const page of pages) {
+    const { x, y, width, height } = page.getCropBox();
+    const newX = x + margins.left;
+    const newY = y + margins.bottom;
+    const newWidth = Math.max(1, width - margins.left - margins.right);
+    const newHeight = Math.max(1, height - margins.top - margins.bottom);
+    page.setCropBox(newX, newY, newWidth, newHeight);
+  }
+
+  const bytes = await pdfDoc.save();
+  return new Blob([new Uint8Array(bytes)], { type: 'application/pdf' });
+}
+
+export async function organizePdf(
+  file: File | Blob,
+  pageOrder: number[]
+): Promise<Blob> {
+  // pageOrder is a 0-indexed list of source page indices in the desired output
+  // order; omitting an index deletes that page, and an index may not repeat
+  // in a way that would duplicate content beyond what the caller intends.
+  const arrayBuffer = await file.arrayBuffer();
+  const srcDoc = await PDFDocument.load(arrayBuffer, { ignoreEncryption: true });
+  const newDoc = await PDFDocument.create();
+
+  const copiedPages = await newDoc.copyPages(srcDoc, pageOrder);
+  copiedPages.forEach((page) => newDoc.addPage(page));
+
+  const bytes = await newDoc.save();
   return new Blob([new Uint8Array(bytes)], { type: 'application/pdf' });
 }
 
@@ -161,12 +214,26 @@ export async function addPageNumbers(file: File | Blob): Promise<Blob> {
   return new Blob([new Uint8Array(bytes)], { type: 'application/pdf' });
 }
 
-export async function protectPdf(file: File | Blob, _password: string): Promise<Blob> {
-  // pdf-lib doesn't support encryption directly, so we return the PDF as-is
-  // In production, this would use a server-side tool
+export async function protectPdf(file: File | Blob, password: string): Promise<Blob> {
   const arrayBuffer = await file.arrayBuffer();
   const pdfDoc = await PDFDocument.load(arrayBuffer, { ignoreEncryption: true });
-  pdfDoc.setTitle(sanitizeText('Protected Document'));
+  await pdfDoc.encrypt({
+    userPassword: password,
+    ownerPassword: password,
+    permissions: { printing: 'highResolution' },
+  });
+  const bytes = await pdfDoc.save();
+  return new Blob([new Uint8Array(bytes)], { type: 'application/pdf' });
+}
+
+export async function unlockPdf(file: File | Blob, password: string): Promise<Blob> {
+  const arrayBuffer = await file.arrayBuffer();
+  let pdfDoc;
+  try {
+    pdfDoc = await PDFDocument.load(arrayBuffer, { password });
+  } catch {
+    throw new Error('Incorrect password, or the file is not a supported encrypted PDF.');
+  }
   const bytes = await pdfDoc.save();
   return new Blob([new Uint8Array(bytes)], { type: 'application/pdf' });
 }

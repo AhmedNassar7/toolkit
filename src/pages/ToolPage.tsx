@@ -12,6 +12,7 @@ interface ToolPageProps {
   optionsComponent?: React.ComponentType<{
     options: Record<string, unknown>;
     setOptions: (opts: Record<string, unknown>) => void;
+    files: File[];
   }>;
 }
 
@@ -133,7 +134,7 @@ export default function ToolPage({ processor, optionsComponent: OptionsComponent
             {OptionsComponent && (
               <div className="bg-white dark:bg-gray-900 rounded-2xl border border-gray-100 dark:border-gray-800 p-6 transition-colors">
                 <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">Options</h3>
-                <OptionsComponent options={options} setOptions={setOptions} />
+                <OptionsComponent options={options} setOptions={setOptions} files={files} />
               </div>
             )}
 

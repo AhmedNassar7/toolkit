@@ -1,7 +1,7 @@
 import ToolPage, { type ProcessResult } from '../ToolPage';
-import { protectPdf } from '../../utils/pdfProcessor';
+import { unlockPdf } from '../../utils/pdfProcessor';
 
-function ProtectOptions({
+function UnlockOptions({
   options,
   setOptions,
 }: {
@@ -16,7 +16,7 @@ function ProtectOptions({
         value={(options.password as string) || ''}
         onChange={(e) => setOptions({ ...options, password: e.target.value })}
         className="w-full px-4 py-2.5 border border-gray-200 dark:border-gray-700 rounded-xl text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-red-500/30 focus:border-red-500 transition-colors"
-        placeholder="Enter password to protect PDF"
+        placeholder="Enter the PDF's current password"
       />
     </div>
   );
@@ -26,15 +26,15 @@ async function processor(files: File[], options?: Record<string, unknown>): Prom
   const file = files[0];
   const password = (options?.password as string) || '';
   if (!password) {
-    throw new Error('Please enter a password to protect the PDF.');
+    throw new Error('Please enter the PDF\'s current password.');
   }
-  const blob = await protectPdf(file, password);
+  const blob = await unlockPdf(file, password);
   return {
-    singleBlob: { blob, name: file.name.replace('.pdf', '_protected.pdf') },
-    info: { protection: 'Password protected', method: 'PDF standard encryption' },
+    singleBlob: { blob, name: file.name.replace('.pdf', '_unlocked.pdf') },
+    info: { protection: 'Removed' },
   };
 }
 
-export default function ProtectPdf() {
-  return <ToolPage processor={processor} optionsComponent={ProtectOptions} />;
+export default function UnlockPdf() {
+  return <ToolPage processor={processor} optionsComponent={UnlockOptions} />;
 }

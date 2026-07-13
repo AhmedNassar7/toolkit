@@ -193,7 +193,7 @@ async function createWordDoc(
       const tableRows = maybeTable.table.map(
         (r) =>
           new docx.TableRow({
-            cells: r.map((cellText) =>
+            children: r.map((cellText) =>
               new docx.TableCell({
                 children: [
                   new docx.Paragraph({ text: cellText }),
@@ -309,7 +309,7 @@ async function createXlsDoc(pages: PageLayout[]): Promise<Buffer> {
   const tableRows = rows.map(
     (row) =>
       new docx.TableRow({
-        cells: row.map(
+        children: row.map(
           (item) =>
             new docx.TableCell({
               children: [

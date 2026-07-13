@@ -140,16 +140,159 @@ async function extractImageText(file: File): Promise<string> {
   return `[Image file: ${file.name}]`;
 }
 
+// Extract slide text from a .pptx (OOXML zip of ppt/slides/slideN.xml, text in <a:t>)
+async function extractPptxText(file: File): Promise<Paragraph[] | string> {
+  try {
+    const JSZip = await import('jszip');
+    const zip = new JSZip.default();
+    const contents = await zip.loadAsync(file);
+
+    const slideFiles = Object.keys(contents.files)
+      .filter((name) => /^ppt\/slides\/slide\d+\.xml$/.test(name))
+      .sort((a, b) => {
+        const na = parseInt(a.match(/slide(\d+)\.xml/)?.[1] || '0', 10);
+        const nb = parseInt(b.match(/slide(\d+)\.xml/)?.[1] || '0', 10);
+        return na - nb;
+      });
+
+    if (slideFiles.length === 0) return `[No slides found in ${file.name}]`;
+
+    const parser = new DOMParser();
+    const paragraphs: Paragraph[] = [];
+
+    for (let i = 0; i < slideFiles.length; i++) {
+      const xml = await contents.file(slideFiles[i])?.async('text');
+      if (!xml) continue;
+      const xmlDoc = parser.parseFromString(xml, 'application/xml');
+
+      paragraphs.push({ runs: [{ text: `Slide ${i + 1}` }], isHeading: 2 });
+
+      xmlDoc.querySelectorAll('a\\:t, t').forEach((t) => {
+        const text = t.textContent?.trim();
+        if (text) paragraphs.push({ runs: [{ text }], isList: true });
+      });
+    }
+
+    return paragraphs.length > 1 ? paragraphs : `[${file.name} contains no readable text]`;
+  } catch {
+    return `[Could not parse PPTX file: ${file.name}]`;
+  }
+}
+
+// Extract cell data from an .xlsx (OOXML zip of xl/worksheets/sheetN.xml + xl/sharedStrings.xml)
+async function extractXlsxText(file: File): Promise<Paragraph[] | string> {
+  try {
+    const JSZip = await import('jszip');
+    const zip = new JSZip.default();
+    const contents = await zip.loadAsync(file);
+    const parser = new DOMParser();
+
+    const sharedStrings: string[] = [];
+    const sharedStringsXml = await contents.file('xl/sharedStrings.xml')?.async('text');
+    if (sharedStringsXml) {
+      const doc = parser.parseFromString(sharedStringsXml, 'application/xml');
+      doc.querySelectorAll('si').forEach((si) => {
+        const text = Array.from(si.querySelectorAll('t')).map((t) => t.textContent || '').join('');
+        sharedStrings.push(text);
+      });
+    }
+
+    const sheetFiles = Object.keys(contents.files)
+      .filter((name) => /^xl\/worksheets\/sheet\d+\.xml$/.test(name))
+      .sort((a, b) => {
+        const na = parseInt(a.match(/sheet(\d+)\.xml/)?.[1] || '0', 10);
+        const nb = parseInt(b.match(/sheet(\d+)\.xml/)?.[1] || '0', 10);
+        return na - nb;
+      });
+
+    if (sheetFiles.length === 0) return `[No worksheets found in ${file.name}]`;
+
+    const paragraphs: Paragraph[] = [];
+
+    for (let i = 0; i < sheetFiles.length; i++) {
+      const xml = await contents.file(sheetFiles[i])?.async('text');
+      if (!xml) continue;
+      const xmlDoc = parser.parseFromString(xml, 'application/xml');
+
+      paragraphs.push({ runs: [{ text: `Sheet ${i + 1}` }], isHeading: 2 });
+
+      xmlDoc.querySelectorAll('row').forEach((row) => {
+        const cells: string[] = [];
+        row.querySelectorAll('c').forEach((c) => {
+          const type = c.getAttribute('t');
+          let value = '';
+          if (type === 's') {
+            const idx = parseInt(c.querySelector('v')?.textContent || '-1', 10);
+            value = sharedStrings[idx] ?? '';
+          } else if (type === 'inlineStr') {
+            value = c.querySelector('is t')?.textContent || '';
+          } else {
+            value = c.querySelector('v')?.textContent || '';
+          }
+          if (value) cells.push(value);
+        });
+        if (cells.length > 0) paragraphs.push({ runs: [{ text: cells.join('  |  ') }] });
+      });
+    }
+
+    return paragraphs.length > 1 ? paragraphs : `[${file.name} contains no readable cell data]`;
+  } catch {
+    return `[Could not parse XLSX file: ${file.name}]`;
+  }
+}
+
+// Extract visible text from an .html/.htm file via DOMParser
+async function extractHtmlText(file: File): Promise<string> {
+  try {
+    const raw = await file.text();
+    const doc = new DOMParser().parseFromString(raw, 'text/html');
+    const blockTags = new Set([
+      'P', 'DIV', 'BR', 'LI', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6',
+      'TR', 'TABLE', 'SECTION', 'ARTICLE', 'HEADER', 'FOOTER', 'UL', 'OL',
+    ]);
+
+    let text = '';
+    const walk = (node: Node) => {
+      if (node.nodeType === Node.TEXT_NODE) {
+        text += node.textContent;
+      } else if (node.nodeType === Node.ELEMENT_NODE) {
+        const el = node as Element;
+        if (el.tagName === 'SCRIPT' || el.tagName === 'STYLE') return;
+        node.childNodes.forEach(walk);
+        if (blockTags.has(el.tagName)) text += '\n';
+      }
+    };
+    walk(doc.body || doc.documentElement);
+
+    const normalized = text
+      .split('\n')
+      .map((line) => line.replace(/[ \t]+/g, ' ').trim())
+      .filter((line, i, arr) => line.length > 0 || (i > 0 && arr[i - 1].length > 0))
+      .join('\n');
+
+    return normalized.trim() || `[${file.name} contains no visible text]`;
+  } catch {
+    return `[Could not parse HTML file: ${file.name}]`;
+  }
+}
+
 // Parse and extract text based on file type
 async function extractFileContent(file: File): Promise<Paragraph[] | string> {
   const ext = file.name.split('.').pop()?.toLowerCase();
 
   if (ext === 'docx') {
     return extractDocxText(file);
+  } else if (ext === 'pptx') {
+    return extractPptxText(file);
+  } else if (ext === 'xlsx') {
+    return extractXlsxText(file);
+  } else if (ext === 'html' || ext === 'htm') {
+    return extractHtmlText(file);
   } else if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext || '')) {
     return extractImageText(file);
+  } else if (['doc', 'ppt', 'xls'].includes(ext || '')) {
+    return `[Legacy binary .${ext} format is not supported. Please save this file as .${ext}x (Office Open XML) and try again.]`;
   } else {
-    // For unsupported formats, show file info
     return `File: ${file.name}\nType: ${file.type || 'Unknown'}\nSize: ${(file.size / 1024).toFixed(1)} KB`;
   }
 }
@@ -185,7 +328,7 @@ function wrapText(text: string, maxWidth: number, fontSize: number = 11): string
 
 async function processor(files: File[]): Promise<ProcessResult> {
   const file = files[0];
-  const { PDFDocument, rgb } = await import('pdf-lib');
+  const { PDFDocument, rgb } = await import('pdf-lib-with-encrypt');
 
   const pdfDoc = await PDFDocument.create();
   const pageWidth = 595.28; // A4
@@ -366,6 +509,7 @@ async function processor(files: File[]): Promise<ProcessResult> {
       source_file: file.name,
       source_size: (file.size / 1024).toFixed(1) + ' KB',
       pages: pdfDoc.getPageCount(),
+      method: 'Local text extraction (basic fidelity)',
     },
   };
 }
@@ -374,27 +518,25 @@ export default function ConvertToPdf() {
   async function wrappedProcessor(files: File[]) {
     const file = files[0];
 
-    // DOCX uses the server for high-fidelity conversion.
+    // DOCX prefers the server for high-fidelity conversion, but falls back to
+    // local (lower-fidelity, text-only) extraction when no server is configured
+    // or it's unreachable, rather than failing outright.
     if (file.name.toLowerCase().endsWith('.docx')) {
       const serverUrl = import.meta.env.VITE_CONVERT_API_URL || (import.meta.env.DEV ? 'http://localhost:3000/convert' : '');
-      if (!serverUrl) {
-        throw new Error('DOCX conversion backend URL is not configured. Set VITE_CONVERT_API_URL to your deployed convert service.');
-      }
-      const form = new FormData();
-      form.append('file', file, file.name);
-
-      try {
-        const res = await fetch(serverUrl, { method: 'POST', body: form });
-        if (!res.ok) throw new Error(await res.text());
-        const blob = await res.blob();
-        return {
-          singleBlob: { blob, name: file.name.replace(/\.[^.]+$/, '.pdf') },
-          info: { source_file: file.name, method: 'LibreOffice server' },
-        };
-      } catch (error) {
-        throw new Error(
-          `DOCX conversion backend is unavailable. Start Docker with "docker compose up --build -d" and retry. ${error instanceof Error ? error.message : ''}`.trim(),
-        );
+      if (serverUrl) {
+        const form = new FormData();
+        form.append('file', file, file.name);
+        try {
+          const res = await fetch(serverUrl, { method: 'POST', body: form });
+          if (!res.ok) throw new Error(await res.text());
+          const blob = await res.blob();
+          return {
+            singleBlob: { blob, name: file.name.replace(/\.[^.]+$/, '.pdf') },
+            info: { source_file: file.name, method: 'LibreOffice server (high fidelity)' },
+          };
+        } catch {
+          // fall through to local extraction below
+        }
       }
     }
 
