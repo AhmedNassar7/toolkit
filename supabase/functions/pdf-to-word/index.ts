@@ -74,21 +74,26 @@ async function extractPdfWithLayout(uint8: Uint8Array): Promise<PageLayout[]> {
 function detectTables(pageItems: TextItem[]): TextItem[][] {
   if (pageItems.length < 2) return [pageItems];
 
-  // Sort by Y position (top to bottom), then X (left to right)
+  // Sort by Y position (top to bottom), then X (left to right). Threshold
+  // matches the row-clustering below so items aren't x-sorted across lines.
   const sorted = [...pageItems].sort((a, b) => {
     const yDiff = Math.abs(b.y - a.y);
-    if (yDiff > 10) return b.y - a.y;
+    if (yDiff > 3) return b.y - a.y;
     return a.x - b.x;
   });
 
-  // Group items by approximate Y position (within 15 units)
+  // Group items by approximate Y position. Items on the same visual line
+  // share (near-)identical baselines, so this only needs to tolerate
+  // floating-point jitter, not real line-height gaps (typical single-spaced
+  // text has ~10-14pt between lines) - a wide threshold here merges distinct
+  // lines together and scrambles their word order once x-sorted as one row.
   const rows: TextItem[][] = [];
   let currentRow: TextItem[] = [];
 
   sorted.forEach((item) => {
     if (
       currentRow.length === 0 ||
-      Math.abs(item.y - currentRow[0].y) < 15
+      Math.abs(item.y - currentRow[0].y) < 3
     ) {
       currentRow.push(item);
     } else {
@@ -102,7 +107,7 @@ function detectTables(pageItems: TextItem[]): TextItem[][] {
   return rows;
 }
 
-function groupLines(items: TextItem[], xGapThreshold = 8, yThreshold = 15) {
+function groupLines(items: TextItem[], xGapThreshold = 8, yThreshold = 3) {
   // Group by approximate Y position into lines
   const sorted = [...items].sort((a, b) => b.y - a.y || a.x - b.x);
   const lines: { y: number; items: TextItem[] }[] = [];
@@ -121,45 +126,6 @@ function groupLines(items: TextItem[], xGapThreshold = 8, yThreshold = 15) {
     y: l.y,
     items: l.items.sort((a, b) => a.x - b.x),
   }));
-}
-
-function buildTableFromRows(rows: TextItem[][]) {
-  // Determine column x positions by inspecting first few rows
-  const xs: number[] = [];
-  rows.forEach((row) => {
-    row.forEach((cell) => {
-      xs.push(cell.x);
-    });
-  });
-  if (xs.length === 0) return null;
-  // cluster xs into columns
-  xs.sort((a, b) => a - b);
-  const cols: number[] = [xs[0]];
-  const colGap = 20; // threshold to start a new column
-  xs.forEach((x) => {
-    if (Math.abs(x - cols[cols.length - 1]) > colGap) cols.push(x);
-  });
-
-  const table: string[][] = rows.map((row) => {
-    const cells = cols.map(() => "");
-    row.forEach((item) => {
-      // find nearest column
-      let bestIdx = 0;
-      let bestDist = Infinity;
-      cols.forEach((cx, idx) => {
-        const d = Math.abs(item.x - cx);
-        if (d < bestDist) {
-          bestDist = d;
-          bestIdx = idx;
-        }
-      });
-      if (cells[bestIdx]) cells[bestIdx] += " " + item.str.trim();
-      else cells[bestIdx] = item.str.trim();
-    });
-    return cells.map((c) => c.trim());
-  });
-
-  return { cols, table };
 }
 
 async function createWordDoc(
@@ -182,70 +148,48 @@ async function createWordDoc(
       );
     }
 
-    // Group items into lines to better reconstruct paragraphs
+    // Group items into lines to reconstruct paragraphs. Word output always
+    // renders as flowing text, one PDF line per paragraph line: attempting to
+    // auto-detect "tables" from x/y clustering is unreliable on real documents
+    // (e.g. a resume's "Company Name ... Date" line looks like a 2-column
+    // table row) and was scrambling normal paragraph reading order when it
+    // misfired. Each visual line becomes its own paragraph, which keeps
+    // bullets, headings, and label/value lines intact and in the correct order.
     const lines = groupLines(page.items);
 
-    // Try detect tables from raw items
-    const rows = detectTables(page.items);
-    const maybeTable = rows.length > 1 && rows.some((r) => r.length > 1) ? buildTableFromRows(rows) : null;
+    // Merge wrapped continuation lines back into one flowing paragraph: a new
+    // paragraph starts at a bullet, or after a real vertical gap (blank line
+    // / section break); anything else is a wrapped continuation of the
+    // previous line and gets joined onto it.
+    const paragraphTexts: string[] = [];
+    let currentText = '';
+    let lastY: number | null = null;
 
-    if (maybeTable && maybeTable.table.length > 0) {
-      const tableRows = maybeTable.table.map(
-        (r) =>
-          new docx.TableRow({
-            children: r.map((cellText) =>
-              new docx.TableCell({
-                children: [
-                  new docx.Paragraph({ text: cellText }),
-                ],
-              })
-            ),
-          })
-      );
+    lines.forEach((line) => {
+      const lineText = line.items.map((it) => it.str).join(' ').trim();
+      if (!lineText) return;
 
+      const isBullet = lineText.startsWith('•');
+      const bigGap = lastY !== null && Math.abs(lastY - line.y) > 20;
+
+      if (lastY === null || isBullet || bigGap) {
+        if (currentText) paragraphTexts.push(currentText);
+        currentText = lineText;
+      } else {
+        currentText += ' ' + lineText;
+      }
+      lastY = line.y;
+    });
+    if (currentText) paragraphTexts.push(currentText);
+
+    paragraphTexts.forEach((text) => {
       elements.push(
-        new docx.Table({
-          rows: tableRows,
-          width: { size: 100, type: docx.WidthType.PERCENTAGE },
+        new docx.Paragraph({
+          text,
+          spacing: { after: 120, line: 280 },
         })
       );
-    } else {
-      // Build paragraphs by joining lines, adding paragraph breaks for larger vertical gaps
-      const mergedParagraphs: string[] = [];
-      let currentPara = "";
-      let lastY: number | null = null;
-
-      for (const line of lines) {
-        const lineText = line.items.map((it, idx) => {
-          // Add a space if next item is sufficiently far from previous
-          return it.str;
-        }).join(" ");
-
-        if (lastY === null) {
-          currentPara = lineText;
-        } else {
-          // if gap between lastY and current line is large, start new paragraph
-          if (Math.abs(lastY - line.y) > 20) {
-            mergedParagraphs.push(currentPara.trim());
-            currentPara = lineText;
-          } else {
-            currentPara += " " + lineText;
-          }
-        }
-        lastY = line.y;
-      }
-
-      if (currentPara.trim()) mergedParagraphs.push(currentPara.trim());
-
-      mergedParagraphs.forEach((p) => {
-        elements.push(
-          new docx.Paragraph({
-            text: p,
-            spacing: { line: 280 },
-          })
-        );
-      });
-    }
+    });
 
     // Add page break if not last page
     if (pageIdx < pages.length - 1) {
@@ -279,10 +223,14 @@ async function createPptDoc(
       })
     );
 
-    page.items.forEach((item) => {
+    // Group into lines (not raw items) so a single line of text isn't split
+    // across multiple bullets out of reading order.
+    groupLines(page.items).forEach((line) => {
+      const lineText = line.items.map((it) => it.str).join(' ').trim();
+      if (!lineText) return;
       sections.push(
         new docx.Paragraph({
-          text: item.str,
+          text: lineText,
           bullet: { level: 0 },
           spacing: { line: 240, after: 100 },
         })
