@@ -514,18 +514,27 @@ async function processor(files: File[]): Promise<ProcessResult> {
   };
 }
 
+// Formats the LibreOffice convert-service can turn into a PDF with full
+// fidelity (fonts, images, tables, real layout) - matches the acceptTypes of
+// the Word/PowerPoint/Excel-to-PDF tools. HTML and images have no server path
+// and always use local extraction.
+const SERVER_CAPABLE_EXTENSIONS = new Set(['docx', 'doc', 'pptx', 'ppt', 'xlsx', 'xls']);
+
 export default function ConvertToPdf() {
   async function wrappedProcessor(files: File[]) {
     const file = files[0];
+    const ext = file.name.split('.').pop()?.toLowerCase() || '';
 
-    // DOCX prefers the server for high-fidelity conversion, but falls back to
-    // local (lower-fidelity, text-only) extraction when no server is configured
-    // or it's unreachable, rather than failing outright.
-    if (file.name.toLowerCase().endsWith('.docx')) {
+    // Server-capable formats prefer the LibreOffice service for high-fidelity
+    // conversion, but fall back to local (lower-fidelity, text-only)
+    // extraction when no server is configured or it's unreachable, rather
+    // than failing outright.
+    if (SERVER_CAPABLE_EXTENSIONS.has(ext)) {
       const serverUrl = import.meta.env.VITE_CONVERT_API_URL || (import.meta.env.DEV ? 'http://localhost:3000/convert' : '');
       if (serverUrl) {
         const form = new FormData();
         form.append('file', file, file.name);
+        form.append('target', 'pdf');
         try {
           const res = await fetch(serverUrl, { method: 'POST', body: form });
           if (!res.ok) throw new Error(await res.text());

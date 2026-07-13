@@ -3,22 +3,52 @@ const multer = require('multer');
 const { execFile } = require('child_process');
 const path = require('path');
 const fs = require('fs');
-const cors = require('cors');
 const os = require('os');
+const cors = require('cors');
 const { pathToFileURL } = require('url');
 
 const upload = multer({
   dest: 'uploads/',
   limits: { fileSize: Number(process.env.MAX_UPLOAD_BYTES || 50 * 1024 * 1024) },
-  fileFilter: (_req, file, callback) => {
-    if (!file.originalname.toLowerCase().endsWith('.docx')) {
-      return callback(new Error('Only DOCX files are supported'));
-    }
-    return callback(null, true);
-  },
 });
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// Formats LibreOffice can reliably import/export for this service. PDF -> XLSX
+// is intentionally omitted: LibreOffice has no PDF import filter for Calc, so
+// that conversion stays on the caller's fallback path.
+const SUPPORTED_TARGETS = {
+  pdf: ['docx', 'pptx'],
+  docx: ['pdf'],
+  doc: ['pdf'],
+  odt: ['pdf'],
+  rtf: ['pdf'],
+  txt: ['pdf'],
+  pptx: ['pdf'],
+  ppt: ['pdf'],
+  odp: ['pdf'],
+  xlsx: ['pdf'],
+  xls: ['pdf'],
+  ods: ['pdf'],
+};
+
+// Explicit export filter per source app so `--convert-to pdf` doesn't guess
+// wrong when soffice can't infer the source type from a sanitized filename.
+const PDF_EXPORT_FILTER = {
+  docx: 'writer_pdf_Export', doc: 'writer_pdf_Export', odt: 'writer_pdf_Export',
+  rtf: 'writer_pdf_Export', txt: 'writer_pdf_Export',
+  pptx: 'impress_pdf_Export', ppt: 'impress_pdf_Export', odp: 'impress_pdf_Export',
+  xlsx: 'calc_pdf_Export', xls: 'calc_pdf_Export', ods: 'calc_pdf_Export',
+};
+
+// Importing a PDF requires telling soffice which app should open it - without
+// this it can't pick an export filter and aborts with "no export filter
+// found", even though bare `--convert-to docx` works fine for every other
+// source format.
+const PDF_IMPORT_FILTER = {
+  docx: 'writer_pdf_import',
+  pptx: 'impress_pdf_import',
+};
 
 const allowedOrigins = (process.env.CORS_ORIGIN || '')
   .split(',')
@@ -37,23 +67,44 @@ app.use(cors({
 
 app.get('/health', (_req, res) => res.json({ ok: true }));
 
-// Convert uploaded DOCX to PDF using installed LibreOffice (soffice)
+function extOf(filename) {
+  return path.extname(filename).replace(/^\./, '').toLowerCase();
+}
+
+function buildConvertToArg(sourceExt, targetExt) {
+  if (targetExt !== 'pdf') return targetExt;
+  const filter = PDF_EXPORT_FILTER[sourceExt];
+  if (!filter) return 'pdf';
+  return `pdf:${filter}:{"EmbedStandardFonts":true,"UseTaggedPDF":true}`;
+}
+
 app.post('/convert', upload.single('file'), (req, res) => {
   if (!req.file) return res.status(400).send('No file uploaded');
-  if (!req.file.originalname.toLowerCase().endsWith('.docx')) {
-    try { fs.unlinkSync(req.file.path); } catch (e) {}
-    return res.status(400).send('Only DOCX files are supported');
+
+  const sourceExt = extOf(req.file.originalname);
+  const targetExt = (req.body.target || 'pdf').toLowerCase();
+
+  const supportedTargets = SUPPORTED_TARGETS[sourceExt];
+  if (!supportedTargets) {
+    try { fs.unlinkSync(req.file.path); } catch {}
+    return res.status(400).send(`Unsupported source format: .${sourceExt || 'unknown'}`);
+  }
+  if (!supportedTargets.includes(targetExt)) {
+    try { fs.unlinkSync(req.file.path); } catch {}
+    return res.status(400).send(`Cannot convert .${sourceExt} to .${targetExt}`);
   }
 
-  const inputPath = path.resolve(req.file.path);
+  // Multer stores uploads without an extension; give soffice an explicit one
+  // so format auto-detection doesn't have to rely on content sniffing alone.
+  const inputPath = `${path.resolve(req.file.path)}.${sourceExt}`;
+  fs.renameSync(path.resolve(req.file.path), inputPath);
+
   const outputDir = path.resolve(path.dirname(inputPath));
   const profileDir = fs.mkdtempSync(path.join(os.tmpdir(), 'toolkit-lo-profile-'));
   const profileUrl = pathToFileURL(profileDir).href;
 
-  // Run soffice to convert with font embedding enabled
   const soffice = process.env.SOFFICE_BIN || 'soffice';
-  // PDF export options with font embedding
-  const pdfExportOptions = 'pdf:writer_pdf_Export:{"EmbedStandardFonts":true,"UseTaggedPDF":true}';
+  const convertToArg = buildConvertToArg(sourceExt, targetExt);
   const args = [
     '--headless',
     '--nologo',
@@ -62,35 +113,38 @@ app.post('/convert', upload.single('file'), (req, res) => {
     '--nofirststartwizard',
     '--norestore',
     `-env:UserInstallation=${profileUrl}`,
-    '--convert-to',
-    pdfExportOptions,
-    '--outdir',
-    outputDir,
-    inputPath,
   ];
+  if (sourceExt === 'pdf' && PDF_IMPORT_FILTER[targetExt]) {
+    args.push(`--infilter=${PDF_IMPORT_FILTER[targetExt]}`);
+  }
+  args.push('--convert-to', convertToArg, '--outdir', outputDir, inputPath);
+
+  const cleanup = () => {
+    try { fs.unlinkSync(inputPath); } catch {}
+    try { fs.rmSync(profileDir, { recursive: true, force: true }); } catch {}
+  };
 
   execFile(soffice, args, { timeout: 2 * 60 * 1000 }, (err) => {
     if (err) {
       console.error('Conversion error', err);
-      try { fs.rmSync(profileDir, { recursive: true, force: true }); } catch (e) {}
-      try { fs.unlinkSync(inputPath); } catch (e) {}
+      cleanup();
       return res.status(500).send('Conversion failed: ' + err.message);
     }
 
-    // PDF will have same base name with .pdf
-    const pdfPath = inputPath + '.pdf';
-    const altPdf = inputPath.replace(/\.[^.]+$/, '.pdf');
-    const finalPdf = fs.existsSync(pdfPath) ? pdfPath : altPdf;
+    const outputPath = path.join(
+      outputDir,
+      `${path.basename(inputPath, path.extname(inputPath))}.${targetExt}`
+    );
 
-    if (!fs.existsSync(finalPdf)) {
+    if (!fs.existsSync(outputPath)) {
+      cleanup();
       return res.status(500).send('Converted file not found');
     }
 
-    res.download(finalPdf, req.file.originalname.replace(/\.docx$/i, '.pdf'), (downloadErr) => {
-      // cleanup temp files
-      try { fs.unlinkSync(inputPath); } catch (e) {}
-      try { fs.unlinkSync(finalPdf); } catch (e) {}
-      try { fs.rmSync(profileDir, { recursive: true, force: true }); } catch (e) {}
+    const outputName = req.file.originalname.replace(/\.[^.]+$/, `.${targetExt}`);
+    res.download(outputPath, outputName, (downloadErr) => {
+      try { fs.unlinkSync(outputPath); } catch {}
+      cleanup();
       if (downloadErr) console.error('Download error', downloadErr);
     });
   });

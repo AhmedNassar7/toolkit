@@ -1,8 +1,14 @@
 FROM node:20-bullseye-slim
 
-# Install LibreOffice, fonts, and essentials for proper DOCX to PDF conversion
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# Install LibreOffice (Writer/Impress/Calc/Draw) and fonts needed for
+# high-fidelity conversion in both directions (Office <-> PDF). PDF import is
+# built into Draw/Impress/core in this LibreOffice version - no separate
+# libreoffice-pdfimport package exists in Debian bullseye.
+RUN apt-get update && apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
     libreoffice-writer \
+    libreoffice-impress \
+    libreoffice-calc \
+    libreoffice-draw \
     libreoffice-common \
     libreoffice-core \
     fonts-crosextra-carlito \
