@@ -3,5 +3,4 @@ dist
 .env
 .DS_Store
 *.log
-# Keep .git in the build context — AfterQuery requires commit history in uploads
-# Do NOT exclude .git
+.git

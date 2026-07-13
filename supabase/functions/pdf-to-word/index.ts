@@ -15,11 +15,10 @@ const corsHeaders = {
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
 
 function sanitizeBaseName(name: string) {
-  return name.replace(/[^a-z0-9_.\- \(\)]/gi, '_').replace(/\s+/g, '_');
+  return name.replace(/[^a-z0-9_.\- ()]/gi, '_').replace(/\s+/g, '_');
 }
 
 class MinimalDOMMatrix {
-  constructor(_init?: unknown) {}
   multiplySelf() { return this; }
   preMultiplySelf() { return this; }
   translateSelf() { return this; }
@@ -107,7 +106,7 @@ function detectTables(pageItems: TextItem[]): TextItem[][] {
   return rows;
 }
 
-function groupLines(items: TextItem[], xGapThreshold = 8, yThreshold = 3) {
+function groupLines(items: TextItem[], yThreshold = 3) {
   // Group by approximate Y position into lines
   const sorted = [...items].sort((a, b) => b.y - a.y || a.x - b.x);
   const lines: { y: number; items: TextItem[] }[] = [];
@@ -360,7 +359,7 @@ Deno.serve(async (req: Request) => {
         const preview = Array.from(outUint8.slice(0, 8)).map((b) => b.toString(16).padStart(2, '0')).join(' ');
         console.log(`Generated ${ext} size=${outUint8.byteLength} preview=${preview}`);
       }
-    } catch (e) {
+    } catch {
       // swallow logging errors in production
     }
 

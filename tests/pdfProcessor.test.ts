@@ -3,8 +3,11 @@ import { PDFDocument, StandardFonts, rgb } from 'pdf-lib-with-encrypt';
 import {
   addPageNumbers,
   compressPdf,
+  cropPdf,
   getPdfInfo,
   mergePdfs,
+  organizePdf,
+  repairPdf,
   rotatePdf,
   splitPdf,
   watermarkPdf,
@@ -466,6 +469,99 @@ describe('pdfProcessor', () => {
       const protected_ = await protectPdf(source, 'correct-password');
 
       await expect(unlockPdf(protected_, 'wrong-password')).rejects.toThrow();
+    });
+  });
+
+  // ============ CROP PDF TESTS ============
+  describe('cropPdf', () => {
+    it('shrinks the crop box by the given margins on every side', async () => {
+      const source = await createSamplePdf(1); // pages are 400x400
+
+      const cropped = await cropPdf(source, { top: 20, bottom: 30, left: 10, right: 40 });
+      const pdf = await loadPdf(cropped);
+      const box = pdf.getPage(0).getCropBox();
+
+      expect(box.x).toBe(10);
+      expect(box.y).toBe(30);
+      expect(box.width).toBe(400 - 10 - 40);
+      expect(box.height).toBe(400 - 20 - 30);
+    });
+
+    it('applies the crop to every page and preserves page count', async () => {
+      const source = await createSamplePdf(4);
+
+      const cropped = await cropPdf(source, { top: 10, bottom: 10, left: 10, right: 10 });
+      const pdf = await loadPdf(cropped);
+
+      expect(pdf.getPageCount()).toBe(4);
+      pdf.getPages().forEach((page) => {
+        const box = page.getCropBox();
+        expect(box.width).toBe(380);
+        expect(box.height).toBe(380);
+      });
+    });
+
+    it('never produces a negative or zero-width crop box for oversized margins', async () => {
+      const source = await createSamplePdf(1);
+
+      const cropped = await cropPdf(source, { top: 500, bottom: 500, left: 500, right: 500 });
+      const pdf = await loadPdf(cropped);
+      const box = pdf.getPage(0).getCropBox();
+
+      expect(box.width).toBeGreaterThan(0);
+      expect(box.height).toBeGreaterThan(0);
+    });
+  });
+
+  // ============ REPAIR PDF TESTS ============
+  describe('repairPdf', () => {
+    it('produces a valid, loadable PDF with the same page count', async () => {
+      const source = await createSamplePdf(3);
+
+      const repaired = await repairPdf(source);
+      const pdf = await loadPdf(repaired);
+
+      expect(pdf.getPageCount()).toBe(3);
+    });
+
+    it('preserves a single page correctly', async () => {
+      const source = await createSamplePdf(1);
+
+      const repaired = await repairPdf(source);
+      const pdf = await loadPdf(repaired);
+
+      expect(pdf.getPageCount()).toBe(1);
+    });
+  });
+
+  // ============ ORGANIZE PDF TESTS ============
+  describe('organizePdf', () => {
+    it('reorders pages according to the given page order', async () => {
+      const source = await createSamplePdf(3);
+
+      const organized = await organizePdf(source, [2, 0, 1]);
+      const pdf = await loadPdf(organized);
+
+      expect(pdf.getPageCount()).toBe(3);
+    });
+
+    it('drops pages that are omitted from the order', async () => {
+      const source = await createSamplePdf(5);
+
+      // Keep only pages 1 and 3 (0-indexed), dropping the rest.
+      const organized = await organizePdf(source, [0, 2]);
+      const pdf = await loadPdf(organized);
+
+      expect(pdf.getPageCount()).toBe(2);
+    });
+
+    it('supports a single-page result', async () => {
+      const source = await createSamplePdf(4);
+
+      const organized = await organizePdf(source, [3]);
+      const pdf = await loadPdf(organized);
+
+      expect(pdf.getPageCount()).toBe(1);
     });
   });
 

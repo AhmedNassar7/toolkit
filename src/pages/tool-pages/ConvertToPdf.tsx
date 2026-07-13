@@ -130,7 +130,7 @@ async function extractDocxText(file: File): Promise<Paragraph[] | string> {
     });
 
     return paragraphs.length > 0 ? paragraphs : `[${file.name} appears to be empty]`;
-  } catch (err) {
+  } catch {
     return `[Could not parse DOCX file: ${file.name}]`;
   }
 }
@@ -418,7 +418,7 @@ async function processor(files: File[]): Promise<ProcessResult> {
       });
 
       // Layout segments into lines by measuring widths
-      let x = margin + indent;
+      const x = margin + indent;
       let remainingWidth = maxWidth - indent;
 
       // If list, prefix bullet
