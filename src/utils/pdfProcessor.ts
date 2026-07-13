@@ -242,8 +242,10 @@ export async function pdfToImages(file: File | Blob): Promise<Blob[]> {
   const arrayBuffer = await file.arrayBuffer();
   const pdfjsLib = await import('pdfjs-dist');
 
-  // Configure pdfjs worker when running in the browser.
-  pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs';
+  // Configure pdfjs worker when running in the browser. Must be prefixed
+  // with the app's base path (import.meta.env.BASE_URL), not an absolute
+  // root path - this app is deployed under /toolkit/, not domain root.
+  pdfjsLib.GlobalWorkerOptions.workerSrc = `${import.meta.env.BASE_URL}pdf.worker.min.mjs`;
 
   const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) }).promise;
   const blobs: Blob[] = [];
