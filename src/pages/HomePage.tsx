@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { tools, categories, getToolsByCategory, type ToolCategory } from '../data/tools';
+import { tools, categories, getToolsByCategory, compareToolStatus, type ToolCategory } from '../data/tools';
 import ToolCard from '../components/ToolCard';
 import { Search, ArrowRight, Shield, Zap, Globe } from 'lucide-react';
 
@@ -24,7 +24,7 @@ export default function HomePage() {
       const q = search.toLowerCase();
       result = result
         .filter((t) => t.name.toLowerCase().includes(q) || t.description.toLowerCase().includes(q))
-        .sort((a, b) => Number(!!a.comingSoon) - Number(!!b.comingSoon));
+        .sort(compareToolStatus);
     }
     return result;
   }, [activeCategory, search]);

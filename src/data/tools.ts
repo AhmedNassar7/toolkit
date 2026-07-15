@@ -437,8 +437,19 @@ export function getToolById(id: string): Tool | undefined {
   return tools.find((t) => t.id === id);
 }
 
+/** Fully working tools first, then ones still being upgraded, then unimplemented ones. */
+function toolStatusRank(t: Tool): number {
+  if (t.comingSoon) return 2;
+  if (t.improving) return 1;
+  return 0;
+}
+
+export function compareToolStatus(a: Tool, b: Tool): number {
+  return toolStatusRank(a) - toolStatusRank(b);
+}
+
 export function getToolsByCategory(category: ToolCategory): Tool[] {
   return tools
     .filter((t) => t.category === category)
-    .sort((a, b) => Number(!!a.comingSoon) - Number(!!b.comingSoon));
+    .sort(compareToolStatus);
 }
