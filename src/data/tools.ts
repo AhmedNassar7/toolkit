@@ -46,6 +46,8 @@ export interface Tool {
   outputLabel: string;
   /** Tool isn't implemented yet - shown with a "Coming Soon" badge instead of pretending it works. */
   comingSoon?: boolean;
+  /** Tool works but currently only at basic (text-only, no fonts/images/layout) fidelity while the high-fidelity path is being set up - shown with an "Upgrading" badge instead of pretending output quality is final. */
+  improving?: boolean;
 }
 
 export const categories: Record<ToolCategory, { label: string; description: string }> = {
@@ -151,6 +153,7 @@ export const tools: Tool[] = [
     color: '#3498db',
     acceptTypes: '.pdf',
     outputLabel: 'Word Document',
+    improving: true,
   },
   {
     id: 'pdf-to-powerpoint',
@@ -161,6 +164,7 @@ export const tools: Tool[] = [
     color: '#3498db',
     acceptTypes: '.pdf',
     outputLabel: 'PowerPoint',
+    improving: true,
   },
   {
     id: 'pdf-to-excel',
@@ -171,6 +175,7 @@ export const tools: Tool[] = [
     color: '#3498db',
     acceptTypes: '.pdf',
     outputLabel: 'Excel Spreadsheet',
+    improving: true,
   },
   {
     id: 'word-to-pdf',
@@ -181,6 +186,7 @@ export const tools: Tool[] = [
     color: '#3498db',
     acceptTypes: '.doc,.docx',
     outputLabel: 'PDF Document',
+    improving: true,
   },
   {
     id: 'powerpoint-to-pdf',
@@ -191,6 +197,7 @@ export const tools: Tool[] = [
     color: '#3498db',
     acceptTypes: '.ppt,.pptx',
     outputLabel: 'PDF Document',
+    improving: true,
   },
   {
     id: 'excel-to-pdf',
@@ -201,16 +208,17 @@ export const tools: Tool[] = [
     color: '#3498db',
     acceptTypes: '.xls,.xlsx',
     outputLabel: 'PDF Document',
+    improving: true,
   },
   {
-    id: 'pdf-to-jpg',
-    name: 'PDF to JPG',
-    description: 'Convert each PDF page into a JPG or extract all images contained in a PDF.',
+    id: 'pdf-to-png',
+    name: 'PDF to PNG',
+    description: 'Convert each PDF page into a PNG image, with JPG and WEBP also available.',
     icon: Image,
     category: 'convert',
     color: '#3498db',
     acceptTypes: '.pdf',
-    outputLabel: 'JPG Images',
+    outputLabel: 'PNG Images',
   },
   {
     id: 'jpg-to-pdf',

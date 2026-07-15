@@ -3,7 +3,7 @@ import { useParams, Link } from 'react-router-dom';
 import { getToolById } from '../data/tools';
 import FileUpload from '../components/FileUpload';
 import ProgressBar from '../components/ProgressBar';
-import { ArrowLeft, Download, RefreshCw, CheckCircle, AlertCircle } from 'lucide-react';
+import { ArrowLeft, Download, RefreshCw, CheckCircle, AlertCircle, Sparkles } from 'lucide-react';
 
 type Step = 'upload' | 'processing' | 'done';
 
@@ -118,6 +118,19 @@ export default function ToolPage({ processor, optionsComponent: OptionsComponent
 
       {/* Main Content */}
       <div className="max-w-4xl mx-auto px-4 sm:px-6 py-8">
+        {tool.improving && (
+          <div className="mb-6 flex items-start gap-3 p-4 rounded-2xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800">
+            <Sparkles className="w-5 h-5 text-amber-500 shrink-0 mt-0.5" />
+            <div>
+              <p className="text-sm font-medium text-amber-800 dark:text-amber-300">This tool is being upgraded</p>
+              <p className="text-sm text-amber-700 dark:text-amber-400 mt-0.5">
+                It works today, but currently produces basic, text-only output (no original fonts, images, or layout).
+                We're working on full-fidelity conversion - check back soon for better results.
+              </p>
+            </div>
+          </div>
+        )}
+
         {/* Upload Step */}
         {step === 'upload' && (
           <div className="space-y-6">

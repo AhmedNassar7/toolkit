@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom';
-import { Clock } from 'lucide-react';
+import { Clock, Sparkles } from 'lucide-react';
 import type { Tool } from '../data/tools';
 
 interface ToolCardProps {
@@ -10,6 +10,7 @@ interface ToolCardProps {
 export default function ToolCard({ tool, compact = false }: ToolCardProps) {
   const Icon = tool.icon;
   const comingSoon = !!tool.comingSoon;
+  const improving = !comingSoon && !!tool.improving;
 
   return (
     <Link
@@ -22,6 +23,12 @@ export default function ToolCard({ tool, compact = false }: ToolCardProps) {
         <span className="absolute top-2 right-2 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 border border-gray-200 dark:border-gray-700">
           <Clock className="w-2.5 h-2.5" />
           Coming Soon
+        </span>
+      )}
+      {improving && (
+        <span className="absolute top-2 right-2 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-50 dark:bg-amber-950/40 text-amber-600 dark:text-amber-400 border border-amber-200 dark:border-amber-800">
+          <Sparkles className="w-2.5 h-2.5" />
+          Upgrading
         </span>
       )}
       <div

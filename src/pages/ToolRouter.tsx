@@ -5,7 +5,7 @@ import SplitPdf from './tool-pages/SplitPdf';
 import RotatePdf from './tool-pages/RotatePdf';
 import WatermarkPdf from './tool-pages/WatermarkPdf';
 import PageNumbers from './tool-pages/PageNumbers';
-import PdfToJpg from './tool-pages/PdfToJpg';
+import PdfToPng from './tool-pages/PdfToPng';
 import JpgToPdf from './tool-pages/JpgToPdf';
 import ProtectPdf from './tool-pages/ProtectPdf';
 import ComingSoon from './tool-pages/ComingSoon';
@@ -28,7 +28,7 @@ const toolComponents: Record<string, React.ComponentType> = {
   'rotate-pdf': RotatePdf,
   'watermark': WatermarkPdf,
   'page-numbers': PageNumbers,
-  'pdf-to-jpg': PdfToJpg,
+  'pdf-to-png': PdfToPng,
   'jpg-to-pdf': JpgToPdf,
   'protect-pdf': ProtectPdf,
   // Office conversions

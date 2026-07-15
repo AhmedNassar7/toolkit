@@ -43,7 +43,7 @@ export default function Footer() {
               Convert
             </h3>
             <ul className="space-y-2">
-              {['pdf-to-word', 'pdf-to-powerpoint', 'pdf-to-excel', 'pdf-to-jpg', 'jpg-to-pdf'].map(
+              {['pdf-to-word', 'pdf-to-powerpoint', 'pdf-to-excel', 'pdf-to-png', 'jpg-to-pdf'].map(
                 (id) => (
                   <li key={id}>
                     <Link

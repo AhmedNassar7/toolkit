@@ -3,19 +3,19 @@ import FormatSelect from '../../components/FormatSelect';
 import { pdfToImages, type ImageFormat } from '../../utils/pdfProcessor';
 
 const FORMATS: { value: ImageFormat; label: string; ext: string }[] = [
-  { value: 'jpeg', label: 'JPG', ext: 'jpg' },
   { value: 'png', label: 'PNG', ext: 'png' },
+  { value: 'jpeg', label: 'JPG', ext: 'jpg' },
   { value: 'webp', label: 'WEBP', ext: 'webp' },
 ];
 
-function PdfToJpgOptions({
+function PdfToPngOptions({
   options,
   setOptions,
 }: {
   options: Record<string, unknown>;
   setOptions: (o: Record<string, unknown>) => void;
 }) {
-  const format = (options.format as ImageFormat) || 'jpeg';
+  const format = (options.format as ImageFormat) || 'png';
   return (
     <FormatSelect
       label="Output format:"
@@ -28,7 +28,7 @@ function PdfToJpgOptions({
 
 async function processor(files: File[], options?: Record<string, unknown>): Promise<ProcessResult> {
   const file = files[0];
-  const format = (options?.format as ImageFormat) || 'jpeg';
+  const format = (options?.format as ImageFormat) || 'png';
   const ext = FORMATS.find((f) => f.value === format)!.ext;
   const blobs = await pdfToImages(file, { format });
   return {
@@ -40,6 +40,6 @@ async function processor(files: File[], options?: Record<string, unknown>): Prom
   };
 }
 
-export default function PdfToJpg() {
-  return <ToolPage processor={processor} optionsComponent={PdfToJpgOptions} />;
+export default function PdfToPng() {
+  return <ToolPage processor={processor} optionsComponent={PdfToPngOptions} />;
 }
