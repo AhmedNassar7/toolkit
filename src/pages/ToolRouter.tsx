@@ -16,6 +16,10 @@ import UnlockPdf from './tool-pages/UnlockPdf';
 import CropPdf from './tool-pages/CropPdf';
 import RepairPdf from './tool-pages/RepairPdf';
 import OrganizePdf from './tool-pages/OrganizePdf';
+import SvgToPng from './tool-pages/SvgToPng';
+import SvgToPdf from './tool-pages/SvgToPdf';
+import PngToSvg from './tool-pages/PngToSvg';
+import PdfToSvg from './tool-pages/PdfToSvg';
 
 const toolComponents: Record<string, React.ComponentType> = {
   'compress-pdf': CompressPdf,
@@ -36,6 +40,11 @@ const toolComponents: Record<string, React.ComponentType> = {
   'powerpoint-to-pdf': ConvertToPdf,
   'excel-to-pdf': ConvertToPdf,
   'html-to-pdf': ConvertToPdf,
+  // SVG conversions
+  'svg-to-png': SvgToPng,
+  'svg-to-pdf': SvgToPdf,
+  'png-to-svg': PngToSvg,
+  'pdf-to-svg': PdfToSvg,
   // Edit tools - not yet implemented, honestly labeled
   'edit-pdf': ComingSoon,
   'sign-pdf': ComingSoon,
