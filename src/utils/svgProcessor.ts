@@ -38,7 +38,21 @@ function loadImage(url: string): Promise<HTMLImageElement> {
   });
 }
 
-async function rasterizeSvg(svgText: string, width: number, height: number, scale: number): Promise<HTMLCanvasElement> {
+export type ImageFormat = 'png' | 'jpeg' | 'webp';
+
+const IMAGE_FORMAT_MIME: Record<ImageFormat, string> = {
+  png: 'image/png',
+  jpeg: 'image/jpeg',
+  webp: 'image/webp',
+};
+
+async function rasterizeSvg(
+  svgText: string,
+  width: number,
+  height: number,
+  scale: number,
+  fillWhite = false
+): Promise<HTMLCanvasElement> {
   const svgBlob = new Blob([svgText], { type: 'image/svg+xml' });
   const url = URL.createObjectURL(svgBlob);
 
@@ -48,6 +62,14 @@ async function rasterizeSvg(svgText: string, width: number, height: number, scal
     canvas.width = Math.max(1, Math.round(width * scale));
     canvas.height = Math.max(1, Math.round(height * scale));
     const ctx = canvas.getContext('2d')!;
+
+    // JPEG has no alpha channel; paint white first so transparent SVGs
+    // don't render with a black background.
+    if (fillWhite) {
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
+
     ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
     return canvas;
   } finally {
@@ -55,20 +77,29 @@ async function rasterizeSvg(svgText: string, width: number, height: number, scal
   }
 }
 
-export async function svgToPng(file: File | Blob, scale = 2): Promise<Blob> {
+export async function svgToImage(file: File | Blob, format: ImageFormat = 'png', scale = 2): Promise<Blob> {
   const svgText = await file.text();
   const { width, height } = parseSvgSize(svgText);
-  const canvas = await rasterizeSvg(svgText, width, height, scale);
+  const canvas = await rasterizeSvg(svgText, width, height, scale, format === 'jpeg');
+  const mime = IMAGE_FORMAT_MIME[format];
 
   return new Promise<Blob>((resolve, reject) => {
-    canvas.toBlob((blob) => {
-      if (!blob) {
-        reject(new Error('Failed to generate PNG from the SVG.'));
-        return;
-      }
-      resolve(blob);
-    }, 'image/png');
+    canvas.toBlob(
+      (blob) => {
+        if (!blob) {
+          reject(new Error('Failed to generate an image from the SVG.'));
+          return;
+        }
+        resolve(blob);
+      },
+      mime,
+      format === 'png' ? undefined : 0.92
+    );
   });
+}
+
+export async function svgToPng(file: File | Blob, scale = 2): Promise<Blob> {
+  return svgToImage(file, 'png', scale);
 }
 
 export async function svgToPdf(file: File | Blob, scale = 2): Promise<Blob> {

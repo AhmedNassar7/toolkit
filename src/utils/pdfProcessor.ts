@@ -238,7 +238,22 @@ export async function unlockPdf(file: File | Blob, password: string): Promise<Bl
   return new Blob([new Uint8Array(bytes)], { type: 'application/pdf' });
 }
 
-export async function pdfToImages(file: File | Blob): Promise<Blob[]> {
+export type ImageFormat = 'jpeg' | 'png' | 'webp';
+
+const IMAGE_FORMAT_MIME: Record<ImageFormat, string> = {
+  jpeg: 'image/jpeg',
+  png: 'image/png',
+  webp: 'image/webp',
+};
+
+export async function pdfToImages(
+  file: File | Blob,
+  options?: { format?: ImageFormat; quality?: number }
+): Promise<Blob[]> {
+  const format = options?.format ?? 'jpeg';
+  const quality = options?.quality ?? 0.92;
+  const mime = IMAGE_FORMAT_MIME[format];
+
   const arrayBuffer = await file.arrayBuffer();
   const pdfjsLib = await import('pdfjs-dist');
 
@@ -258,10 +273,17 @@ export async function pdfToImages(file: File | Blob): Promise<Blob[]> {
     canvas.height = viewport.height;
     const ctx = canvas.getContext('2d')!;
 
+    // JPEG has no alpha channel; paint white first so pages with
+    // transparent regions don't render as black.
+    if (format === 'jpeg') {
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
+
     await page.render({ canvasContext: ctx, viewport } as never).promise;
 
     const blob = await new Promise<Blob>((resolve) => {
-      canvas.toBlob((b) => resolve(b!), 'image/jpeg', 0.92);
+      canvas.toBlob((b) => resolve(b!), mime, format === 'png' ? undefined : quality);
     });
     blobs.push(blob);
   }
