@@ -125,7 +125,7 @@ export const tools: Tool[] = [
   {
     id: 'repair-pdf',
     name: 'Repair PDF',
-    description: 'Repair a damaged PDF and recover data from corrupt PDF files.',
+    description: 'Leniently re-parses and rebuilds the PDF structure to fix broken xref tables and other minor structural damage. If your PDF already opens fine, the output will look identical.',
     icon: Wrench,
     category: 'optimize',
     color: '#27ae60',
