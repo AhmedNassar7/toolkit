@@ -14,7 +14,10 @@ dist-ssr
 .vscode/*
 !.vscode/extensions.json
 .idea
+.claude/settings.local.json
 .DS_Store
+Thumbs.db
+desktop.ini
 *.suo
 *.ntvs*
 *.njsproj
@@ -23,3 +26,4 @@ dist-ssr
 .env
 
 supabase/.temp/
+convert-service/uploads/
