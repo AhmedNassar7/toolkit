@@ -9,11 +9,16 @@ import {
   organizePdf,
   repairPdf,
   rotatePdf,
+  signPdf,
   splitPdf,
   watermarkPdf,
   protectPdf,
   unlockPdf,
 } from '../src/utils/pdfProcessor';
+
+// 1x1 transparent PNG, used as a stand-in for a drawn/uploaded signature image.
+const SAMPLE_SIGNATURE_PNG =
+  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
 
 async function createSamplePdf(pageCount: number, metadata?: { title?: string; author?: string }) {
   const pdf = await PDFDocument.create();
@@ -370,6 +375,62 @@ describe('pdfProcessor', () => {
 
       expect(pdf.getPageCount()).toBe(2);
       expect(pdf.getPages()).toHaveLength(2);
+    });
+  });
+
+  // ============ SIGN PDF TESTS ============
+  describe('signPdf', () => {
+    it('applies the signature with default options without changing page count', async () => {
+      const source = await createSamplePdf(3);
+
+      const signed = await signPdf(source, SAMPLE_SIGNATURE_PNG);
+      const pdf = await loadPdf(signed);
+
+      expect(pdf.getPageCount()).toBe(3);
+    });
+
+    it('supports every target mode without error', async () => {
+      const targets = ['first', 'last', 'all'] as const;
+
+      for (const target of targets) {
+        const source = await createSamplePdf(3);
+        const signed = await signPdf(source, SAMPLE_SIGNATURE_PNG, { target });
+        const pdf = await loadPdf(signed);
+
+        expect(pdf.getPageCount()).toBe(3);
+      }
+    });
+
+    it('supports every anchor position without error', async () => {
+      const anchors = ['bottom-right', 'bottom-left', 'top-right', 'top-left'] as const;
+
+      for (const anchor of anchors) {
+        const source = await createSamplePdf(1);
+        const signed = await signPdf(source, SAMPLE_SIGNATURE_PNG, { anchor, widthPercent: 30 });
+        const pdf = await loadPdf(signed);
+
+        expect(pdf.getPageCount()).toBe(1);
+      }
+    });
+
+    it('does not change page count or dimensions', async () => {
+      const source = await createSamplePdf(2);
+
+      const signed = await signPdf(source, SAMPLE_SIGNATURE_PNG, { widthPercent: 40 });
+      const pdf = await loadPdf(signed);
+      const page = pdf.getPage(1);
+
+      expect(pdf.getPageCount()).toBe(2);
+      expect(page.getSize()).toEqual({ width: 400, height: 400 });
+    });
+
+    it('handles a single-page document with target "all"', async () => {
+      const source = await createSamplePdf(1);
+
+      const signed = await signPdf(source, SAMPLE_SIGNATURE_PNG, { target: 'all' });
+      const pdf = await loadPdf(signed);
+
+      expect(pdf.getPageCount()).toBe(1);
     });
   });
 

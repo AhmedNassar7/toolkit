@@ -295,13 +295,12 @@ export const tools: Tool[] = [
   {
     id: 'sign-pdf',
     name: 'Sign PDF',
-    description: 'Sign yourself or request electronic signatures from others.',
+    description: 'Draw or upload your signature and stamp it onto any page of your PDF.',
     icon: Pen,
     category: 'edit',
     color: '#f39c12',
     acceptTypes: '.pdf',
     outputLabel: 'Signed PDF',
-    comingSoon: true,
   },
   {
     id: 'watermark',

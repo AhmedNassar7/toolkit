@@ -20,6 +20,7 @@ import SvgToPng from './tool-pages/SvgToPng';
 import SvgToPdf from './tool-pages/SvgToPdf';
 import PngToSvg from './tool-pages/PngToSvg';
 import PdfToSvg from './tool-pages/PdfToSvg';
+import SignPdf from './tool-pages/SignPdf';
 
 const toolComponents: Record<string, React.ComponentType> = {
   'compress-pdf': CompressPdf,
@@ -47,7 +48,7 @@ const toolComponents: Record<string, React.ComponentType> = {
   'pdf-to-svg': PdfToSvg,
   // Edit tools - not yet implemented, honestly labeled
   'edit-pdf': ComingSoon,
-  'sign-pdf': ComingSoon,
+  'sign-pdf': SignPdf,
   'pdf-forms': ComingSoon,
   // Organize
   'organize-pdf': OrganizePdf,

@@ -173,6 +173,55 @@ export async function watermarkPdf(
   return new Blob([new Uint8Array(bytes)], { type: 'application/pdf' });
 }
 
+export type SignatureAnchor = 'bottom-right' | 'bottom-left' | 'top-right' | 'top-left';
+export type SignatureTarget = 'first' | 'last' | 'all';
+
+export async function signPdf(
+  file: File | Blob,
+  signatureDataUrl: string,
+  options?: { target?: SignatureTarget; anchor?: SignatureAnchor; widthPercent?: number }
+): Promise<Blob> {
+  const arrayBuffer = await file.arrayBuffer();
+  const pdfDoc = await PDFDocument.load(arrayBuffer, { ignoreEncryption: true });
+  const pages = pdfDoc.getPages();
+
+  const imageBytes = dataUrlToBytes(signatureDataUrl);
+  const image = signatureDataUrl.startsWith('data:image/png')
+    ? await pdfDoc.embedPng(imageBytes)
+    : await pdfDoc.embedJpg(imageBytes);
+
+  const target = options?.target ?? 'last';
+  const anchor = options?.anchor ?? 'bottom-right';
+  const widthPercent = options?.widthPercent ?? 25;
+  const margin = 36; // 0.5in
+
+  const targetPages =
+    target === 'all' ? pages : target === 'first' ? [pages[0]] : [pages[pages.length - 1]];
+
+  for (const page of targetPages) {
+    const { width: pageWidth, height: pageHeight } = page.getSize();
+    const drawWidth = pageWidth * (widthPercent / 100);
+    const drawHeight = drawWidth * (image.height / image.width);
+    const x = anchor.endsWith('right') ? pageWidth - drawWidth - margin : margin;
+    const y = anchor.startsWith('bottom') ? margin : pageHeight - drawHeight - margin;
+
+    page.drawImage(image, { x, y, width: drawWidth, height: drawHeight });
+  }
+
+  const bytes = await pdfDoc.save();
+  return new Blob([new Uint8Array(bytes)], { type: 'application/pdf' });
+}
+
+function dataUrlToBytes(dataUrl: string): Uint8Array {
+  const base64 = dataUrl.slice(dataUrl.indexOf(',') + 1);
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
+}
+
 function parseHexColor(color?: string) {
   if (!color) {
     return undefined;
