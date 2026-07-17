@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { tools, categories, getToolsByCategory, compareToolStatus, type ToolCategory } from '../data/tools';
 import ToolCard from '../components/ToolCard';
+import ParticleBackground from '../components/ParticleBackground';
 import { Search, ArrowRight, Shield, Zap, Globe } from 'lucide-react';
 
 const categoryColors: Record<ToolCategory, string> = {
@@ -48,6 +49,8 @@ export default function HomePage() {
           <div className="absolute bottom-10 right-20 w-96 h-96 bg-blue-500 rounded-full blur-[150px]" />
           <div className="absolute top-1/2 left-1/2 w-64 h-64 bg-green-500 rounded-full blur-[100px]" />
         </div>
+
+        <ParticleBackground />
 
         <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
           <div className="inline-flex items-center gap-2 px-4 py-1.5 bg-white/10 backdrop-blur-sm rounded-full text-sm text-gray-300 mb-6 border border-white/10">
