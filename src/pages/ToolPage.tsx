@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
 import { getToolById } from '../data/tools';
+import { useGoBack } from '../hooks/useGoBack';
 import FileUpload from '../components/FileUpload';
 import ProgressBar from '../components/ProgressBar';
 import { ArrowLeft, Download, RefreshCw, CheckCircle, AlertCircle, Sparkles } from 'lucide-react';
@@ -25,6 +26,7 @@ export interface ProcessResult {
 export default function ToolPage({ processor, optionsComponent: OptionsComponent }: ToolPageProps) {
   const { toolId } = useParams<{ toolId: string }>();
   const tool = toolId ? getToolById(toolId) : undefined;
+  const goBack = useGoBack();
 
   const [files, setFiles] = useState<File[]>([]);
   const [step, setStep] = useState<Step>('upload');
@@ -79,9 +81,9 @@ export default function ToolPage({ processor, optionsComponent: OptionsComponent
         <div className="text-center">
           <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">Tool Not Found</h2>
           <p className="text-gray-500 dark:text-gray-400 mb-4">The requested tool does not exist.</p>
-          <Link to="/" className="text-red-500 font-medium hover:underline">
+          <button onClick={goBack} className="text-red-500 font-medium hover:underline">
             Back to Home
-          </Link>
+          </button>
         </div>
       </div>
     );
@@ -94,13 +96,13 @@ export default function ToolPage({ processor, optionsComponent: OptionsComponent
       {/* Tool Header */}
       <div className="bg-white dark:bg-gray-900 border-b border-gray-100 dark:border-gray-800 transition-colors">
         <div className="max-w-4xl mx-auto px-4 sm:px-6 py-6">
-          <Link
-            to="/"
+          <button
+            onClick={goBack}
             className="inline-flex items-center gap-1.5 text-sm text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 transition-colors mb-4"
           >
             <ArrowLeft className="w-4 h-4" />
             All Tools
-          </Link>
+          </button>
           <div className="flex items-center gap-4">
             <div
               className="w-14 h-14 rounded-2xl flex items-center justify-center shrink-0"

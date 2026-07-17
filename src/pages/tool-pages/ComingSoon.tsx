@@ -1,21 +1,23 @@
-import { useParams, Link } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
 import { getToolById } from '../../data/tools';
+import { useGoBack } from '../../hooks/useGoBack';
 import { ArrowLeft, Clock } from 'lucide-react';
 
 export default function ComingSoon() {
   const { toolId } = useParams<{ toolId: string }>();
   const tool = toolId ? getToolById(toolId) : undefined;
+  const goBack = useGoBack();
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-950 pt-20 transition-colors">
       <div className="max-w-2xl mx-auto px-4 sm:px-6 py-16 text-center">
-        <Link
-          to="/"
+        <button
+          onClick={goBack}
           className="inline-flex items-center gap-1.5 text-sm text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 transition-colors mb-8"
         >
           <ArrowLeft className="w-4 h-4" />
           All Tools
-        </Link>
+        </button>
         <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-gray-100 dark:bg-gray-800 flex items-center justify-center">
           <Clock className="w-8 h-8 text-gray-400" />
         </div>
