@@ -58,7 +58,7 @@ Two small helpers keep tests concise:
 
 - **`pdfToImages`** needs a real `<canvas>`/DOM (it renders PDF pages to images), so it isn't covered by this Node test suite — verified separately with a real-browser (Playwright) test instead.
 - **Download triggers** (`saveAs`) aren't tested — they only matter in a real browser.
-- **PDF-to-Word/PowerPoint/Excel and the optional Word-to-PDF server path** run outside this codebase (a Supabase Edge Function and an external LibreOffice service), so they have no automated coverage here. They've been verified manually against a real multi-page resume PDF.
+- **PDF-to-Word/PowerPoint/Excel** (`src/utils/officeExportProcessor.ts`) needs `pdfjs-dist`'s worker plus `docx`/`pptxgenjs`/`exceljs`, all of which need a real browser, so it isn't covered by this Node test suite — verified with a real-browser (Playwright) test instead. The optional Word/PowerPoint/Excel→PDF server path (self-hosted `convert-service/`, LibreOffice) also runs outside this codebase and has no automated coverage here.
 
 ## Adding a test
 
@@ -66,4 +66,4 @@ Follow the pattern already in the relevant `describe` block in `tests/pdfProcess
 
 ---
 
-**Last updated:** 2026-07-13
+**Last updated:** 2026-07-21

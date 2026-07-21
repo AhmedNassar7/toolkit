@@ -1,8 +1,6 @@
 import { useParams } from 'react-router-dom';
 import ToolPage, { type ProcessResult } from '../ToolPage';
-
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string;
-const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
+import { extractPdfLayout, buildDocxFromPdf, buildPptxFromPdf, buildXlsxFromPdf } from '../../utils/officeExportProcessor';
 
 const formatMap: Record<string, string> = {
   'pdf-to-word': 'docx',
@@ -16,8 +14,8 @@ const extMap: Record<string, string> = {
   xlsx: '.xlsx',
 };
 
-// LibreOffice has no PDF import filter for Calc, so PDF -> XLSX can't go
-// through the convert-service and always uses the Supabase fallback below.
+// LibreOffice has no PDF import filter for Calc, so PDF -> XLSX always uses
+// the local (client-side) fallback below.
 const SERVER_CAPABLE_FORMATS = new Set(['docx', 'pptx']);
 
 function convertServiceUrl(): string {
@@ -34,25 +32,13 @@ async function convertViaServer(file: File, format: string): Promise<Blob> {
   return res.blob();
 }
 
-async function convertViaSupabase(file: File, format: string): Promise<Blob> {
-  const formData = new FormData();
-  formData.append('file', file);
-  formData.append('format', format);
+async function convertLocally(file: File, format: string): Promise<Blob> {
+  const pages = await extractPdfLayout(file);
+  const baseName = file.name.replace(/\.pdf$/i, '');
 
-  const response = await fetch(`${SUPABASE_URL}/functions/v1/pdf-to-word`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-    },
-    body: formData,
-  });
-
-  if (!response.ok) {
-    const err = await response.json().catch(() => ({ error: 'Conversion failed' }));
-    throw new Error(err.error || `Server error: ${response.status}`);
-  }
-
-  return response.blob();
+  if (format === 'pptx') return buildPptxFromPdf(pages);
+  if (format === 'xlsx') return buildXlsxFromPdf(pages);
+  return buildDocxFromPdf(baseName, pages);
 }
 
 async function processor(files: File[], _options?: Record<string, unknown>, toolId?: string): Promise<ProcessResult> {
@@ -61,9 +47,10 @@ async function processor(files: File[], _options?: Record<string, unknown>, tool
   const ext = extMap[format] || '.doc';
 
   // Prefer the LibreOffice-backed convert-service for real layout fidelity
-  // (fonts, images, tables, real slide geometry); fall back to the Supabase
-  // edge function's text-only reconstruction if the server isn't configured,
-  // unreachable, or can't handle this format (e.g. PDF -> XLSX).
+  // (fonts, images, tables, real slide geometry); fall back to local,
+  // in-browser text extraction if the server isn't configured, unreachable,
+  // or can't handle this format (e.g. PDF -> XLSX). Nothing ever leaves the
+  // browser in the fallback path.
   let blob: Blob;
   let method: string;
 
@@ -72,11 +59,11 @@ async function processor(files: File[], _options?: Record<string, unknown>, tool
       blob = await convertViaServer(file, format);
       method = 'LibreOffice server (high fidelity)';
     } catch {
-      blob = await convertViaSupabase(file, format);
+      blob = await convertLocally(file, format);
       method = 'Local text extraction (basic fidelity)';
     }
   } else {
-    blob = await convertViaSupabase(file, format);
+    blob = await convertLocally(file, format);
     method = 'Local text extraction (basic fidelity)';
   }
 

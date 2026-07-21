@@ -34,10 +34,9 @@ This is a client-side, single-page PDF/image/SVG toolkit (Vite + React 18 + TS +
 
 **Raster <-> SVG conversion is not vector tracing.** PNG/JPG -> SVG wraps the raster as a base64 `<image>` inside an SVG container at native pixel size (`wrapRasterInSvg` in `svgProcessor.ts`) - this preserves exact position/size without adding a tracing dependency, but the result isn't editable as paths.
 
-**Three tool families are not fully client-side**, and know about each other's fallback chain:
-- PDF -> Excel always calls a Supabase Edge Function (`supabase/functions/pdf-to-word/`) - LibreOffice has no PDF import filter for Calc, so there's no local/self-hosted path for this one.
-- PDF -> Word/PowerPoint and Word/PowerPoint/Excel -> PDF prefer the optional self-hosted LibreOffice service in `convert-service/` (`VITE_CONVERT_API_URL`, run via `docker compose up --build -d`) for real fidelity, and fall back to the same Supabase Edge Function (basic text/slide/cell extraction) if that env var isn't set.
-- This fallback logic lives in `src/pages/tool-pages/PdfToOffice.tsx` and `ConvertToPdf.tsx` (`SERVER_CAPABLE_FORMATS` gates which formats even attempt the server path).
+**Everything is client-side. There is no backend, no upload, and no Supabase** - this app used to call a Supabase Edge Function for PDF -> Word/PowerPoint/Excel, but that's been fully replaced by in-browser extraction/generation (`src/utils/officeExportProcessor.ts`, using `pdfjs-dist` for extraction and `docx`/`pptxgenjs`/`exceljs` for generation). Don't reintroduce a server call for any tool without discussing it first.
+
+**One optional, self-hosted exception**: PDF <-> Word/PowerPoint and Word/PowerPoint/Excel -> PDF prefer the optional self-hosted LibreOffice service in `convert-service/` (`VITE_CONVERT_API_URL`, run via `docker compose up --build -d`) for real fidelity, and fall back to fully in-browser extraction/generation if that env var isn't set, unreachable, or (for PDF -> Excel, since LibreOffice has no PDF import filter for Calc) unsupported for the format. This fallback logic lives in `src/pages/tool-pages/PdfToOffice.tsx` and `ConvertToPdf.tsx` (`SERVER_CAPABLE_FORMATS`/`SERVER_CAPABLE_EXTENSIONS` gate which formats even attempt the server path). Without `VITE_CONVERT_API_URL` set, every tool still works, fully client-side.
 
 Everything else (merge/split/rotate/organize/crop/compress/repair/watermark/page-numbers/protect/unlock/imagesToPdf, SVG conversions, QR) runs entirely in-browser via `pdf-lib-with-encrypt` (a `pdf-lib` fork adding real password encryption) and `pdfjs-dist`.
 

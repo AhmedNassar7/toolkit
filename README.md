@@ -1,6 +1,6 @@
 # Toolkit - PDF Tools Suite
 
-**A free, mostly-client-side PDF toolkit.** Merge, split, compress, convert, and secure PDFs with just a few clicks. **100% FREE • No sign-up required • No ads**
+**A free, 100% client-side PDF toolkit.** Merge, split, compress, convert, and secure PDFs with just a few clicks. **Your files never leave your device** - every tool runs entirely in your browser, with no upload and no backend. **100% FREE • No sign-up required • No ads**
 
 ---
 
@@ -66,9 +66,9 @@ Convert between PDF and other popular formats.
 
 | Tool | Status | Description | Input | Output |
 |------|--------|-------------|-------|--------|
-| **PDF to Word** | ✅ | High-fidelity via an optional self-hosted LibreOffice service; falls back to layout-aware text extraction via a Supabase Edge Function if that's not configured | `.pdf` | `.docx` |
-| **PDF to PowerPoint** | ✅ | High-fidelity via the same LibreOffice service (real slide geometry, not just a bulleted outline); falls back to one slide of extracted text per PDF page | `.pdf` | `.pptx` |
-| **PDF to Excel** | ✅ | Extracts detected table rows into cells via a Supabase Edge Function (LibreOffice has no PDF import filter for Calc, so this format always uses this path) | `.pdf` | `.xlsx` |
+| **PDF to Word** | ✅ | High-fidelity via an optional self-hosted LibreOffice service; falls back to layout-aware text extraction done entirely in-browser if that's not configured | `.pdf` | `.docx` |
+| **PDF to PowerPoint** | ✅ | High-fidelity via the same LibreOffice service (real slide geometry, not just a bulleted outline); falls back to one slide of extracted text per PDF page, built in-browser | `.pdf` | `.pptx` |
+| **PDF to Excel** | ✅ | Extracts detected table rows into cells entirely in-browser (LibreOffice has no PDF import filter for Calc, so this format always uses the client-side path) | `.pdf` | `.xlsx` |
 
 **Office → PDF:**
 
@@ -124,8 +124,8 @@ Smarter tools for scanning, reading, and understanding PDFs.
 
 ### 🔒 Security & Privacy
 
-- **Mostly client-side**: Most tools process files entirely in your browser — nothing is uploaded.
-- **Exceptions**: PDF→Excel always uses a Supabase Edge Function; PDF→Word/PowerPoint and Office→PDF prefer a self-hosted LibreOffice conversion server when configured, otherwise fall back to the Edge Function or local extraction. In all cases the file is sent for processing but isn't stored afterward.
+- **100% client-side**: Every tool processes files entirely in your browser. Nothing is uploaded, and there is no backend or server dependency of any kind for any tool.
+- **Optional exception**: If you configure `VITE_CONVERT_API_URL` to point at your own self-hosted `convert-service/` (LibreOffice, run via Docker on infrastructure you control), Office↔PDF conversions send the file there for higher-fidelity output instead of the built-in in-browser extraction, and it isn't stored afterward. This is entirely opt-in - without it, everything still works, fully client-side.
 - **No Account**: No sign-up required
 - **No Ads**: Completely ad-free
 - **HTTPS Only**: All connections encrypted
@@ -136,8 +136,9 @@ Smarter tools for scanning, reading, and understanding PDFs.
 
 - **Frontend**: React 18 + TypeScript, built with Vite, styled with Tailwind CSS
 - **PDF processing**: [`pdf-lib-with-encrypt`](https://www.npmjs.com/package/pdf-lib-with-encrypt) (a `pdf-lib` fork that adds real password encryption/decryption) and [`pdfjs-dist`](https://www.npmjs.com/package/pdfjs-dist), both running client-side in the browser
-- **Backend**: A [Supabase](https://supabase.com) Edge Function (Deno) for PDF→Word/PowerPoint/Excel conversion
-- **Optional backend**: A small Node/Express service in [`convert-service/`](convert-service/) that wraps LibreOffice for high-fidelity conversion in both directions - Word/PowerPoint/Excel→PDF and PDF→Word/PowerPoint (self-hosted via Docker; the app works without it, just with lower-fidelity output for those conversions)
+- **Office document generation**: [`docx`](https://www.npmjs.com/package/docx), [`pptxgenjs`](https://www.npmjs.com/package/pptxgenjs), and [`exceljs`](https://www.npmjs.com/package/exceljs) build `.docx`/`.pptx`/`.xlsx` files entirely in-browser for PDF→Word/PowerPoint/Excel
+- **Backend**: None required - the app has no server-side component
+- **Optional backend**: A small Node/Express service in [`convert-service/`](convert-service/) that wraps LibreOffice for high-fidelity conversion in both directions - Word/PowerPoint/Excel→PDF and PDF→Word/PowerPoint (self-hosted via Docker; entirely opt-in - the app works fully without it, just with lower-fidelity output for those conversions)
 - **Hosting**: Static site on GitHub Pages, deployed via [`gh-pages`](https://www.npmjs.com/package/gh-pages)
 
 ---
@@ -148,19 +149,16 @@ Smarter tools for scanning, reading, and understanding PDFs.
 git clone https://github.com/AhmedNassar7/toolkit.git
 cd toolkit
 npm install
-cp .env.example .env   # then fill in your own Supabase project's values
 npm run dev             # starts the dev server, usually at http://localhost:5173
 ```
 
-**Environment variables** (see [`.env.example`](.env.example)):
+No environment variables or accounts are required to run the app - every tool works out of the box, fully client-side.
+
+**Environment variables** (see [`.env.example`](.env.example)) - entirely optional:
 
 | Variable | Required? | What it's for |
 |---|---|---|
-| `VITE_SUPABASE_URL` | Yes, for PDF→Word/PowerPoint/Excel | Your Supabase project's URL |
-| `VITE_SUPABASE_ANON_KEY` | Yes, for PDF→Word/PowerPoint/Excel | Your Supabase project's public anon key |
-| `VITE_CONVERT_API_URL` | No | URL of a self-hosted `convert-service` instance, for high-fidelity Word/PowerPoint/Excel→PDF and PDF→Word/PowerPoint |
-
-Without the Supabase variables set (and the Edge Function deployed - see [Deployment](#-deployment)), every other tool still works; only PDF→Word/PowerPoint/Excel will fail.
+| `VITE_CONVERT_API_URL` | No | URL of a self-hosted `convert-service` instance, for higher-fidelity Word/PowerPoint/Excel→PDF and PDF→Word/PowerPoint. Without it, those conversions still work, using in-browser extraction/generation instead. |
 
 **Available scripts:**
 
@@ -186,11 +184,11 @@ src/
     ToolRouter.tsx   Maps a tool's URL id to its component
     HomePage.tsx     The tool grid / search / category browser
   utils/
-    pdfProcessor.ts  Core PDF logic (merge, split, crop, encrypt, ...) - unit tested
+    pdfProcessor.ts         Core PDF logic (merge, split, crop, encrypt, ...) - unit tested
+    officeExportProcessor.ts  PDF→Word/PowerPoint/Excel extraction + generation, entirely in-browser
   data/
     tools.ts         The list of tools: name, description, category, status
 
-supabase/functions/pdf-to-word/   The Edge Function behind PDF→Word/PowerPoint/Excel (also the fallback for PDF→Word/PowerPoint)
 convert-service/                  Optional Node/LibreOffice service for Office<->PDF high-fidelity conversion
 tests/                            Vitest suite for src/utils/pdfProcessor.ts
 ```
@@ -203,14 +201,7 @@ tests/                            Vitest suite for src/utils/pdfProcessor.ts
 ```bash
 npm run deploy
 ```
-This builds the app and pushes `dist/` to the `gh-pages` branch, matching the `homepage` field in `package.json`.
-
-**Edge Function** (Supabase, powers PDF→Word/PowerPoint/Excel):
-```bash
-npx supabase login
-npx supabase link --project-ref your-project-ref
-npx supabase functions deploy pdf-to-word
-```
+This builds the app and pushes `dist/` to the `gh-pages` branch, matching the `homepage` field in `package.json`. No backend deployment step is needed - the app is entirely static.
 
 **Convert service** (optional, for high-fidelity Word/PowerPoint/Excel→PDF and PDF→Word/PowerPoint):
 ```bash
@@ -233,5 +224,5 @@ Run `npm test` to run the test suite (56 tests covering all client-side PDF oper
 ---
 
 **Last Updated**: July 2026  
-**Version**: 1.1.0  
-**Status**: 22 of 31 tools available; 9 honestly marked Coming Soon
+**Version**: 1.2.0  
+**Status**: 22 of 31 tools available; 9 honestly marked Coming Soon — now 100% client-side, no backend required

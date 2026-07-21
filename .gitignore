@@ -25,5 +25,7 @@ desktop.ini
 *.sw?
 .env
 
-supabase/.temp/
 convert-service/uploads/
+
+# Personal test fixtures (real names/emails/phone numbers) - local only, never pushed to the public repo.
+tests/fixtures/
