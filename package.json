@@ -2,6 +2,7 @@
   "name": "toolkit",
   "homepage": "https://ahmednassar7.github.io/toolkit/",
   "private": true,
+  "license": "MIT",
   "version": "0.0.0",
   "type": "module",
   "scripts": {
