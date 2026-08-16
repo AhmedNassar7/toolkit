@@ -4,6 +4,7 @@ import {
   addPageNumbers,
   compressPdf,
   cropPdf,
+  editPdf,
   getPdfInfo,
   mergePdfs,
   organizePdf,
@@ -14,6 +15,7 @@ import {
   watermarkPdf,
   protectPdf,
   unlockPdf,
+  type EditElement,
 } from '../src/utils/pdfProcessor';
 
 // 1x1 transparent PNG, used as a stand-in for a drawn/uploaded signature image.
@@ -571,6 +573,108 @@ describe('pdfProcessor', () => {
 
       expect(box.width).toBeGreaterThan(0);
       expect(box.height).toBeGreaterThan(0);
+    });
+  });
+
+  // ============ EDIT PDF TESTS ============
+  describe('editPdf', () => {
+    it('adds a text element without changing page count', async () => {
+      const source = await createSamplePdf(2); // pages are 400x400
+
+      const elements: EditElement[] = [
+        { id: '1', type: 'text', pageIndex: 0, x: 20, y: 20, text: 'Hello world', fontSize: 24, color: '#112233', fontFamily: 'Helvetica' },
+      ];
+      const edited = await editPdf(source, elements);
+      const pdf = await loadPdf(edited);
+
+      expect(pdf.getPageCount()).toBe(2);
+    });
+
+    it('draws elements onto the correct page only', async () => {
+      const source = await createSamplePdf(3);
+
+      const elements: EditElement[] = [
+        { id: '1', type: 'rect', pageIndex: 1, x: 10, y: 10, width: 100, height: 50, strokeColor: '#000000', strokeWidth: 2, opacity: 1 },
+      ];
+      const edited = await editPdf(source, elements);
+      const pdf = await loadPdf(edited);
+
+      expect(pdf.getPageCount()).toBe(3);
+    });
+
+    it('supports every element type without error', async () => {
+      const source = await createSamplePdf(1); // 400x400
+
+      const elements: EditElement[] = [
+        { id: '1', type: 'text', pageIndex: 0, x: 20, y: 20, text: 'Annotated', fontSize: 18, color: '#ff0000', fontFamily: 'HelveticaBold' },
+        { id: '2', type: 'rect', pageIndex: 0, x: 20, y: 60, width: 120, height: 60, strokeColor: '#00ff00', strokeWidth: 3, opacity: 0.8, fillColor: '#eeeeee' },
+        { id: '3', type: 'ellipse', pageIndex: 0, x: 20, y: 140, width: 80, height: 80, strokeColor: '#0000ff', strokeWidth: 2, opacity: 1 },
+        { id: '4', type: 'image', pageIndex: 0, x: 20, y: 240, width: 40, height: 40, dataUrl: SAMPLE_SIGNATURE_PNG },
+        {
+          id: '5',
+          type: 'freehand',
+          pageIndex: 0,
+          x: 200,
+          y: 200,
+          points: [
+            { x: 0, y: 0 },
+            { x: 10, y: 20 },
+            { x: 30, y: -5 },
+          ],
+          color: '#ff00ff',
+          strokeWidth: 4,
+        },
+      ];
+
+      const edited = await editPdf(source, elements);
+      const pdf = await loadPdf(edited);
+
+      expect(pdf.getPageCount()).toBe(1);
+    });
+
+    it('skips text elements with empty content', async () => {
+      const source = await createSamplePdf(1);
+
+      const elements: EditElement[] = [
+        { id: '1', type: 'text', pageIndex: 0, x: 20, y: 20, text: '   ', fontSize: 18, color: '#000000', fontFamily: 'Helvetica' },
+      ];
+
+      await expect(editPdf(source, elements)).resolves.toBeInstanceOf(Blob);
+    });
+
+    it('skips freehand strokes with fewer than two points', async () => {
+      const source = await createSamplePdf(1);
+
+      const elements: EditElement[] = [
+        { id: '1', type: 'freehand', pageIndex: 0, x: 20, y: 20, points: [{ x: 0, y: 0 }], color: '#000000', strokeWidth: 2 },
+      ];
+
+      await expect(editPdf(source, elements)).resolves.toBeInstanceOf(Blob);
+    });
+
+    it('ignores elements targeting an out-of-range page', async () => {
+      const source = await createSamplePdf(2);
+
+      const elements: EditElement[] = [
+        { id: '1', type: 'text', pageIndex: 5, x: 20, y: 20, text: 'Off page', fontSize: 18, color: '#000000', fontFamily: 'Helvetica' },
+      ];
+
+      const edited = await editPdf(source, elements);
+      const pdf = await loadPdf(edited);
+
+      expect(pdf.getPageCount()).toBe(2);
+    });
+
+    it('does not change page dimensions', async () => {
+      const source = await createSamplePdf(1); // 400x400
+
+      const elements: EditElement[] = [
+        { id: '1', type: 'rect', pageIndex: 0, x: 0, y: 0, width: 400, height: 400, strokeColor: '#000000', strokeWidth: 1, opacity: 1 },
+      ];
+      const edited = await editPdf(source, elements);
+      const pdf = await loadPdf(edited);
+
+      expect(pdf.getPage(0).getSize()).toEqual({ width: 400, height: 400 });
     });
   });
 

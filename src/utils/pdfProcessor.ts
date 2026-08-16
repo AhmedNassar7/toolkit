@@ -1,4 +1,4 @@
-import { PDFDocument, degrees, rgb } from 'pdf-lib-with-encrypt';
+import { PDFDocument, LineCapStyle, degrees, rgb } from 'pdf-lib-with-encrypt';
 import { saveAs } from 'file-saver';
 
 // Sanitize text for WinAnsi compatibility
@@ -206,6 +206,149 @@ export async function signPdf(
     const y = anchor.startsWith('bottom') ? margin : pageHeight - drawHeight - margin;
 
     page.drawImage(image, { x, y, width: drawWidth, height: drawHeight });
+  }
+
+  const bytes = await pdfDoc.save();
+  return new Blob([new Uint8Array(bytes)], { type: 'application/pdf' });
+}
+
+export type EditFontFamily = 'Helvetica' | 'HelveticaBold' | 'TimesRoman' | 'Courier';
+
+interface EditElementBase {
+  id: string;
+  pageIndex: number;
+  /** Point coordinates, top-left origin, y increases downward (matches an on-screen page render). */
+  x: number;
+  y: number;
+}
+
+export interface EditTextElement extends EditElementBase {
+  type: 'text';
+  text: string;
+  fontSize: number;
+  color: string;
+  fontFamily: EditFontFamily;
+}
+
+export interface EditImageElement extends EditElementBase {
+  type: 'image';
+  dataUrl: string;
+  width: number;
+  height: number;
+}
+
+export interface EditShapeElement extends EditElementBase {
+  type: 'rect' | 'ellipse';
+  width: number;
+  height: number;
+  fillColor?: string;
+  strokeColor: string;
+  strokeWidth: number;
+  opacity: number;
+}
+
+export interface EditFreehandElement extends EditElementBase {
+  type: 'freehand';
+  /** Offsets from (x, y), in points, y increases downward. */
+  points: { x: number; y: number }[];
+  color: string;
+  strokeWidth: number;
+}
+
+export type EditElement = EditTextElement | EditImageElement | EditShapeElement | EditFreehandElement;
+
+const STANDARD_FONT_NAMES: Record<EditFontFamily, string> = {
+  Helvetica: 'Helvetica',
+  HelveticaBold: 'Helvetica-Bold',
+  TimesRoman: 'Times-Roman',
+  Courier: 'Courier',
+};
+
+export async function editPdf(file: File | Blob, elements: EditElement[]): Promise<Blob> {
+  const arrayBuffer = await file.arrayBuffer();
+  const pdfDoc = await PDFDocument.load(arrayBuffer, { ignoreEncryption: true });
+  const pages = pdfDoc.getPages();
+
+  const fonts = new Map<EditFontFamily, Awaited<ReturnType<typeof pdfDoc.embedFont>>>();
+  const getFont = async (family: EditFontFamily) => {
+    let font = fonts.get(family);
+    if (!font) {
+      font = await pdfDoc.embedFont(STANDARD_FONT_NAMES[family]);
+      fonts.set(family, font);
+    }
+    return font;
+  };
+
+  const images = new Map<string, Awaited<ReturnType<typeof pdfDoc.embedPng>>>();
+  const getImage = async (dataUrl: string) => {
+    let image = images.get(dataUrl);
+    if (!image) {
+      const bytes = dataUrlToBytes(dataUrl);
+      image = dataUrl.startsWith('data:image/png') ? await pdfDoc.embedPng(bytes) : await pdfDoc.embedJpg(bytes);
+      images.set(dataUrl, image);
+    }
+    return image;
+  };
+
+  for (const el of elements) {
+    const page = pages[el.pageIndex];
+    if (!page) continue;
+    const { height: pageHeight } = page.getSize();
+
+    if (el.type === 'text') {
+      if (!el.text.trim()) continue;
+      const font = await getFont(el.fontFamily);
+      page.drawText(sanitizeText(el.text), {
+        x: el.x,
+        y: pageHeight - el.y - el.fontSize * 0.8,
+        size: el.fontSize,
+        font,
+        lineHeight: el.fontSize * 1.2,
+        color: parseHexColor(el.color) ?? rgb(0, 0, 0),
+      });
+    } else if (el.type === 'image') {
+      const image = await getImage(el.dataUrl);
+      page.drawImage(image, {
+        x: el.x,
+        y: pageHeight - el.y - el.height,
+        width: el.width,
+        height: el.height,
+      });
+    } else if (el.type === 'rect') {
+      page.drawRectangle({
+        x: el.x,
+        y: pageHeight - el.y - el.height,
+        width: el.width,
+        height: el.height,
+        color: el.fillColor ? parseHexColor(el.fillColor) : undefined,
+        borderColor: parseHexColor(el.strokeColor),
+        borderWidth: el.strokeWidth,
+        opacity: el.opacity,
+        borderOpacity: el.opacity,
+      });
+    } else if (el.type === 'ellipse') {
+      page.drawEllipse({
+        x: el.x + el.width / 2,
+        y: pageHeight - el.y - el.height / 2,
+        xScale: el.width / 2,
+        yScale: el.height / 2,
+        color: el.fillColor ? parseHexColor(el.fillColor) : undefined,
+        borderColor: parseHexColor(el.strokeColor),
+        borderWidth: el.strokeWidth,
+        opacity: el.opacity,
+        borderOpacity: el.opacity,
+      });
+    } else if (el.type === 'freehand') {
+      if (el.points.length < 2) continue;
+      const path = el.points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x},${p.y}`).join(' ');
+      page.drawSvgPath(path, {
+        x: el.x,
+        y: pageHeight - el.y,
+        borderColor: parseHexColor(el.color) ?? rgb(0, 0, 0),
+        borderWidth: el.strokeWidth,
+        borderLineCap: LineCapStyle.Round,
+      });
+    }
   }
 
   const bytes = await pdfDoc.save();

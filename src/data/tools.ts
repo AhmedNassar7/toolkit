@@ -290,7 +290,6 @@ export const tools: Tool[] = [
     color: '#f39c12',
     acceptTypes: '.pdf',
     outputLabel: 'Edited PDF',
-    comingSoon: true,
   },
   {
     id: 'sign-pdf',
