@@ -330,7 +330,6 @@ export const tools: Tool[] = [
     color: '#f39c12',
     acceptTypes: '.pdf',
     outputLabel: 'Filled PDF',
-    comingSoon: true,
   },
   // Security
   {

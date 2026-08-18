@@ -1,4 +1,14 @@
-import { PDFDocument, LineCapStyle, degrees, rgb } from 'pdf-lib-with-encrypt';
+import {
+  PDFDocument,
+  LineCapStyle,
+  degrees,
+  rgb,
+  PDFTextField,
+  PDFCheckBox,
+  PDFRadioGroup,
+  PDFDropdown,
+  PDFOptionList,
+} from 'pdf-lib-with-encrypt';
 import { saveAs } from 'file-saver';
 
 // Sanitize text for WinAnsi compatibility
@@ -585,6 +595,131 @@ export async function redactPdf(file: File | Blob, boxes: RedactBox[]): Promise<
   }
 
   const bytes = await newDoc.save();
+  return new Blob([new Uint8Array(bytes)], { type: 'application/pdf' });
+}
+
+export interface DetectedFormField {
+  name: string;
+  type: 'text' | 'checkbox' | 'radio' | 'dropdown' | 'optionlist' | 'unsupported';
+  currentValue?: string | boolean;
+  options?: string[];
+  multiline?: boolean;
+}
+
+/** Reads the AcroForm (if any) already embedded in a PDF, for a "fill this form" flow. */
+export async function detectPdfFormFields(file: File | Blob): Promise<DetectedFormField[]> {
+  const arrayBuffer = await file.arrayBuffer();
+  const pdfDoc = await PDFDocument.load(arrayBuffer, { ignoreEncryption: true });
+  const form = pdfDoc.getForm();
+
+  return form.getFields().map((field): DetectedFormField => {
+    const name = field.getName();
+    if (field instanceof PDFTextField) {
+      return { name, type: 'text', currentValue: field.getText() ?? '', multiline: field.isMultiline() };
+    }
+    if (field instanceof PDFCheckBox) {
+      return { name, type: 'checkbox', currentValue: field.isChecked() };
+    }
+    if (field instanceof PDFRadioGroup) {
+      return { name, type: 'radio', currentValue: field.getSelected(), options: field.getOptions() };
+    }
+    if (field instanceof PDFDropdown) {
+      return { name, type: 'dropdown', currentValue: field.getSelected()[0], options: field.getOptions() };
+    }
+    if (field instanceof PDFOptionList) {
+      return { name, type: 'optionlist', currentValue: field.getSelected()[0], options: field.getOptions() };
+    }
+    return { name, type: 'unsupported' };
+  });
+}
+
+export interface FormFieldValue {
+  name: string;
+  type: 'text' | 'checkbox' | 'radio' | 'dropdown' | 'optionlist';
+  value: string | boolean;
+}
+
+export interface NewFormField {
+  pageIndex: number;
+  type: 'text' | 'checkbox';
+  name: string;
+  /** Point coordinates, top-left origin, y increases downward (matches an on-screen page render at scale 1). */
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/**
+ * Fills values into a PDF's existing AcroForm fields and/or adds brand new fields
+ * (drawn by the user) to create a fillable PDF. Flattening bakes filled values into
+ * the page content and removes the interactive fields, so it's skipped whenever new
+ * fields are being added - those need to stay interactive for whoever fills them in.
+ */
+export async function processPdfForm(
+  file: File | Blob,
+  options: { fieldValues?: FormFieldValue[]; newFields?: NewFormField[]; flatten?: boolean }
+): Promise<Blob> {
+  const arrayBuffer = await file.arrayBuffer();
+  const pdfDoc = await PDFDocument.load(arrayBuffer, { ignoreEncryption: true });
+  const form = pdfDoc.getForm();
+
+  for (const fv of options.fieldValues ?? []) {
+    try {
+      if (fv.type === 'text') {
+        form.getTextField(fv.name).setText(fv.value ? String(fv.value) : undefined);
+      } else if (fv.type === 'checkbox') {
+        const checkBox = form.getCheckBox(fv.name);
+        if (fv.value) checkBox.check();
+        else checkBox.uncheck();
+      } else if (fv.type === 'radio') {
+        form.getRadioGroup(fv.name).select(String(fv.value));
+      } else if (fv.type === 'dropdown') {
+        form.getDropdown(fv.name).select(String(fv.value));
+      } else if (fv.type === 'optionlist') {
+        form.getOptionList(fv.name).select(String(fv.value));
+      }
+    } catch {
+      // Field missing or the wrong type for this document - skip it rather than fail the whole save.
+    }
+  }
+
+  const newFields = options.newFields ?? [];
+  if (newFields.length > 0) {
+    const pages = pdfDoc.getPages();
+    const font = await pdfDoc.embedFont('Helvetica');
+    const usedNames = new Set(form.getFields().map((f) => f.getName()));
+
+    for (const nf of newFields) {
+      const page = pages[nf.pageIndex];
+      if (!page) continue;
+
+      const baseName = nf.name.trim() || 'Field';
+      let name = baseName;
+      let suffix = 1;
+      while (usedNames.has(name)) {
+        name = `${baseName}_${suffix++}`;
+      }
+      usedNames.add(name);
+
+      const { height: pageHeight } = page.getSize();
+      const y = pageHeight - nf.y - nf.height;
+
+      if (nf.type === 'checkbox') {
+        const checkBox = form.createCheckBox(name);
+        checkBox.addToPage(page, { x: nf.x, y, width: nf.width, height: nf.height });
+      } else {
+        const textField = form.createTextField(name);
+        textField.addToPage(page, { x: nf.x, y, width: nf.width, height: nf.height, font });
+      }
+    }
+  }
+
+  if (options.flatten && newFields.length === 0) {
+    form.flatten();
+  }
+
+  const bytes = await pdfDoc.save();
   return new Blob([new Uint8Array(bytes)], { type: 'application/pdf' });
 }
 

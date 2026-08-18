@@ -23,6 +23,7 @@ import PdfToSvg from './tool-pages/PdfToSvg';
 import SignPdf from './tool-pages/SignPdf';
 import EditPdf from './tool-pages/EditPdf';
 import RedactPdf from './tool-pages/RedactPdf';
+import PdfForms from './tool-pages/PdfForms';
 
 const toolComponents: Record<string, React.ComponentType> = {
   'compress-pdf': CompressPdf,
@@ -51,7 +52,7 @@ const toolComponents: Record<string, React.ComponentType> = {
   // Edit tools
   'edit-pdf': EditPdf,
   'sign-pdf': SignPdf,
-  'pdf-forms': ComingSoon,
+  'pdf-forms': PdfForms,
   // Organize
   'organize-pdf': OrganizePdf,
   'crop-pdf': CropPdf,
