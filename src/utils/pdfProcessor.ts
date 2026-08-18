@@ -509,6 +509,85 @@ export async function imagesToPdf(files: File[]): Promise<Blob> {
   return new Blob([new Uint8Array(bytes)], { type: 'application/pdf' });
 }
 
+export interface RedactBox {
+  pageIndex: number;
+  /** Point coordinates, top-left origin, y increases downward (matches an on-screen page render at scale 1). */
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/**
+ * Redacts by rasterizing each affected page (rendering it to a canvas, painting
+ * solid black over each box, then re-embedding as a flattened image) rather than
+ * drawing a box on top of the existing content stream - this actually removes the
+ * underlying text/graphics instead of merely covering it, so it can't be recovered
+ * by copy-paste or by inspecting the PDF's objects. Pages with no boxes are copied
+ * through unchanged, keeping their original vector text and file size.
+ */
+export async function redactPdf(file: File | Blob, boxes: RedactBox[]): Promise<Blob> {
+  if (boxes.length === 0) {
+    throw new Error('Add at least one redaction box before saving.');
+  }
+
+  const arrayBuffer = await file.arrayBuffer();
+  const boxesByPage = new Map<number, RedactBox[]>();
+  for (const box of boxes) {
+    const list = boxesByPage.get(box.pageIndex) ?? [];
+    list.push(box);
+    boxesByPage.set(box.pageIndex, list);
+  }
+
+  const srcDoc = await PDFDocument.load(arrayBuffer, { ignoreEncryption: true });
+  const newDoc = await PDFDocument.create();
+
+  const pdfjsLib = await import('pdfjs-dist');
+  pdfjsLib.GlobalWorkerOptions.workerSrc = `${import.meta.env.BASE_URL}pdf.worker.min.mjs`;
+  const pdfjsDoc = await pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer) }).promise;
+
+  const pageCount = srcDoc.getPageCount();
+  const RENDER_SCALE = 3;
+
+  for (let i = 0; i < pageCount; i++) {
+    const pageBoxes = boxesByPage.get(i);
+    if (!pageBoxes || pageBoxes.length === 0) {
+      const [copied] = await newDoc.copyPages(srcDoc, [i]);
+      newDoc.addPage(copied);
+      continue;
+    }
+
+    const pdfjsPage = await pdfjsDoc.getPage(i + 1);
+    const unscaled = pdfjsPage.getViewport({ scale: 1 });
+    const viewport = pdfjsPage.getViewport({ scale: RENDER_SCALE });
+
+    const canvas = document.createElement('canvas');
+    canvas.width = viewport.width;
+    canvas.height = viewport.height;
+    const ctx = canvas.getContext('2d')!;
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    await pdfjsPage.render({ canvasContext: ctx, viewport } as never).promise;
+
+    ctx.fillStyle = '#000000';
+    for (const box of pageBoxes) {
+      ctx.fillRect(box.x * RENDER_SCALE, box.y * RENDER_SCALE, box.width * RENDER_SCALE, box.height * RENDER_SCALE);
+    }
+
+    const pngBlob = await new Promise<Blob>((resolve) => {
+      canvas.toBlob((b) => resolve(b!), 'image/png');
+    });
+    const pngBytes = new Uint8Array(await pngBlob.arrayBuffer());
+    const image = await newDoc.embedPng(pngBytes);
+
+    const page = newDoc.addPage([unscaled.width, unscaled.height]);
+    page.drawImage(image, { x: 0, y: 0, width: unscaled.width, height: unscaled.height });
+  }
+
+  const bytes = await newDoc.save();
+  return new Blob([new Uint8Array(bytes)], { type: 'application/pdf' });
+}
+
 export async function getPdfInfo(file: File | Blob): Promise<{
   pages: number;
   size: string;

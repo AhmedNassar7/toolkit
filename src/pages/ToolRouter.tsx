@@ -22,6 +22,7 @@ import PngToSvg from './tool-pages/PngToSvg';
 import PdfToSvg from './tool-pages/PdfToSvg';
 import SignPdf from './tool-pages/SignPdf';
 import EditPdf from './tool-pages/EditPdf';
+import RedactPdf from './tool-pages/RedactPdf';
 
 const toolComponents: Record<string, React.ComponentType> = {
   'compress-pdf': CompressPdf,
@@ -59,7 +60,7 @@ const toolComponents: Record<string, React.ComponentType> = {
   'pdf-to-pdfa': ComingSoon,
   // Security
   'unlock-pdf': UnlockPdf,
-  'redact-pdf': ComingSoon,
+  'redact-pdf': RedactPdf,
   // Intelligence - not yet implemented, honestly labeled
   'scan-to-pdf': JpgToPdf,
   'ocr-pdf': ComingSoon,

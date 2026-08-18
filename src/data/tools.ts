@@ -362,7 +362,6 @@ export const tools: Tool[] = [
     color: '#8e44ad',
     acceptTypes: '.pdf',
     outputLabel: 'Redacted PDF',
-    comingSoon: true,
   },
   // Intelligence
   {
