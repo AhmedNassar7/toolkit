@@ -10,6 +10,7 @@ import {
   PDFOptionList,
 } from 'pdf-lib-with-encrypt';
 import { saveAs } from 'file-saver';
+import type { PDFDocumentProxy } from 'pdfjs-dist';
 
 // Sanitize text for WinAnsi compatibility
 function sanitizeText(text: string): string {
@@ -758,4 +759,206 @@ export function downloadBlobsAsZip(blobs: { blob: Blob; name: string }[], zipNam
     const content = await zip.generateAsync({ type: 'blob' });
     saveAs(content, zipName);
   });
+}
+
+const COMPARE_THUMB_WIDTH = 220;
+const COMPARE_THUMB_HEIGHT = 300;
+/** Sum of per-channel RGB deltas (0-765) above which a pixel counts as "different" - tolerates minor anti-aliasing noise. */
+const COMPARE_PIXEL_TOLERANCE = 40;
+/** Percentage of differing pixels above which a page is flagged "changed" rather than "identical". */
+const COMPARE_CHANGED_THRESHOLD = 0.4;
+
+export interface PageComparisonResult {
+  pageIndex: number;
+  status: 'identical' | 'changed' | 'only-in-a' | 'only-in-b';
+  diffPercent?: number;
+  thumbA?: string;
+  thumbB?: string;
+  thumbDiff?: string;
+}
+
+export interface CompareResult {
+  pages: PageComparisonResult[];
+  pageCountA: number;
+  pageCountB: number;
+}
+
+/** Renders a page "contain"-fit (preserving aspect ratio, letterboxed on white) into a fixed-size canvas, so two differently-sized pages can still be pixel-diffed directly. */
+async function renderPageContain(pdf: PDFDocumentProxy, pageNumber: number, boxWidth: number, boxHeight: number): Promise<HTMLCanvasElement> {
+  const page = await pdf.getPage(pageNumber);
+  const unscaled = page.getViewport({ scale: 1 });
+  const scale = Math.min(boxWidth / unscaled.width, boxHeight / unscaled.height);
+  const viewport = page.getViewport({ scale });
+
+  const canvas = document.createElement('canvas');
+  canvas.width = boxWidth;
+  canvas.height = boxHeight;
+  const ctx = canvas.getContext('2d')!;
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, boxWidth, boxHeight);
+  ctx.translate((boxWidth - viewport.width) / 2, (boxHeight - viewport.height) / 2);
+  await page.render({ canvasContext: ctx, viewport } as never).promise;
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+
+  return canvas;
+}
+
+/** Pixel-diffs two same-size canvases, producing a percentage-different score and a highlight canvas (differing pixels in red, matching pixels dimmed). */
+function diffCanvases(canvasA: HTMLCanvasElement, canvasB: HTMLCanvasElement): { diffPercent: number; diffCanvas: HTMLCanvasElement } {
+  const { width, height } = canvasA;
+  const dataA = canvasA.getContext('2d')!.getImageData(0, 0, width, height);
+  const dataB = canvasB.getContext('2d')!.getImageData(0, 0, width, height);
+
+  const diffCanvas = document.createElement('canvas');
+  diffCanvas.width = width;
+  diffCanvas.height = height;
+  const diffCtx = diffCanvas.getContext('2d')!;
+  const diffImage = diffCtx.createImageData(width, height);
+
+  let diffCount = 0;
+  const totalPixels = width * height;
+
+  for (let i = 0; i < dataA.data.length; i += 4) {
+    const delta =
+      Math.abs(dataA.data[i] - dataB.data[i]) +
+      Math.abs(dataA.data[i + 1] - dataB.data[i + 1]) +
+      Math.abs(dataA.data[i + 2] - dataB.data[i + 2]);
+
+    if (delta > COMPARE_PIXEL_TOLERANCE) {
+      diffCount++;
+      diffImage.data[i] = 239;
+      diffImage.data[i + 1] = 68;
+      diffImage.data[i + 2] = 68;
+      diffImage.data[i + 3] = 255;
+    } else {
+      const gray = (dataA.data[i] + dataA.data[i + 1] + dataA.data[i + 2]) / 3;
+      const lightened = 255 - (255 - gray) * 0.35;
+      diffImage.data[i] = lightened;
+      diffImage.data[i + 1] = lightened;
+      diffImage.data[i + 2] = lightened;
+      diffImage.data[i + 3] = 255;
+    }
+  }
+
+  diffCtx.putImageData(diffImage, 0, 0);
+  return { diffPercent: (diffCount / totalPixels) * 100, diffCanvas };
+}
+
+/** Compares two PDFs page-by-page: identical/changed for pages both share, only-in-a/only-in-b for a page-count mismatch. */
+export async function comparePdfs(fileA: File | Blob, fileB: File | Blob): Promise<CompareResult> {
+  const pdfjsLib = await import('pdfjs-dist');
+  pdfjsLib.GlobalWorkerOptions.workerSrc = `${import.meta.env.BASE_URL}pdf.worker.min.mjs`;
+
+  const [bufA, bufB] = await Promise.all([fileA.arrayBuffer(), fileB.arrayBuffer()]);
+  const [pdfA, pdfB] = await Promise.all([
+    pdfjsLib.getDocument({ data: new Uint8Array(bufA) }).promise,
+    pdfjsLib.getDocument({ data: new Uint8Array(bufB) }).promise,
+  ]);
+
+  const pageCountA = pdfA.numPages;
+  const pageCountB = pdfB.numPages;
+  const commonPages = Math.min(pageCountA, pageCountB);
+  const pages: PageComparisonResult[] = [];
+
+  for (let i = 0; i < commonPages; i++) {
+    const [canvasA, canvasB] = await Promise.all([
+      renderPageContain(pdfA, i + 1, COMPARE_THUMB_WIDTH, COMPARE_THUMB_HEIGHT),
+      renderPageContain(pdfB, i + 1, COMPARE_THUMB_WIDTH, COMPARE_THUMB_HEIGHT),
+    ]);
+    const { diffPercent, diffCanvas } = diffCanvases(canvasA, canvasB);
+    const status: PageComparisonResult['status'] = diffPercent > COMPARE_CHANGED_THRESHOLD ? 'changed' : 'identical';
+
+    pages.push({
+      pageIndex: i,
+      status,
+      diffPercent,
+      thumbA: canvasA.toDataURL('image/png'),
+      thumbB: canvasB.toDataURL('image/png'),
+      thumbDiff: status === 'changed' ? diffCanvas.toDataURL('image/png') : undefined,
+    });
+  }
+
+  for (let i = commonPages; i < pageCountA; i++) {
+    const canvasA = await renderPageContain(pdfA, i + 1, COMPARE_THUMB_WIDTH, COMPARE_THUMB_HEIGHT);
+    pages.push({ pageIndex: i, status: 'only-in-a', thumbA: canvasA.toDataURL('image/png') });
+  }
+  for (let i = commonPages; i < pageCountB; i++) {
+    const canvasB = await renderPageContain(pdfB, i + 1, COMPARE_THUMB_WIDTH, COMPARE_THUMB_HEIGHT);
+    pages.push({ pageIndex: i, status: 'only-in-b', thumbB: canvasB.toDataURL('image/png') });
+  }
+
+  return { pages, pageCountA, pageCountB };
+}
+
+function escapeHtml(text: string): string {
+  return text.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
+}
+
+/** Builds a self-contained HTML report (thumbnails embedded as data URLs) summarizing a comparePdfs() result. */
+export function buildCompareReport(result: CompareResult, nameA: string, nameB: string): Blob {
+  const statusLabel: Record<PageComparisonResult['status'], string> = {
+    identical: 'Identical',
+    changed: 'Changed',
+    'only-in-a': `Only in ${escapeHtml(nameA)}`,
+    'only-in-b': `Only in ${escapeHtml(nameB)}`,
+  };
+  const statusColor: Record<PageComparisonResult['status'], string> = {
+    identical: '#16a34a',
+    changed: '#ea580c',
+    'only-in-a': '#2563eb',
+    'only-in-b': '#7c3aed',
+  };
+
+  const rows = result.pages
+    .map((p) => {
+      const thumbs = [
+        p.thumbA ? `<figure><img src="${p.thumbA}" alt=""><figcaption>${escapeHtml(nameA)}</figcaption></figure>` : '',
+        p.thumbDiff ? `<figure><img src="${p.thumbDiff}" alt=""><figcaption>Diff</figcaption></figure>` : '',
+        p.thumbB ? `<figure><img src="${p.thumbB}" alt=""><figcaption>${escapeHtml(nameB)}</figcaption></figure>` : '',
+      ].join('');
+      const detail = p.status === 'changed' && p.diffPercent !== undefined ? ` - ${p.diffPercent.toFixed(1)}% of pixels differ` : '';
+
+      return `
+        <section class="page-row">
+          <h2>Page ${p.pageIndex + 1} <span class="badge" style="background:${statusColor[p.status]}">${statusLabel[p.status]}${detail}</span></h2>
+          <div class="thumbs">${thumbs}</div>
+        </section>`;
+    })
+    .join('');
+
+  const changed = result.pages.filter((p) => p.status === 'changed').length;
+  const identical = result.pages.filter((p) => p.status === 'identical').length;
+  const onlyInA = result.pages.filter((p) => p.status === 'only-in-a').length;
+  const onlyInB = result.pages.filter((p) => p.status === 'only-in-b').length;
+
+  const html = `<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>PDF Comparison Report</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f8fafc; color: #1e293b; margin: 0; padding: 2rem; }
+  h1 { font-size: 1.5rem; margin-bottom: 0.25rem; }
+  .summary { color: #64748b; margin-bottom: 2rem; }
+  .summary strong { color: #1e293b; }
+  .page-row { background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 1.25rem; margin-bottom: 1rem; }
+  .page-row h2 { font-size: 1rem; margin: 0 0 0.75rem; display: flex; align-items: center; gap: 0.5rem; }
+  .badge { color: #fff; font-size: 0.7rem; font-weight: 600; padding: 0.15rem 0.6rem; border-radius: 999px; }
+  .thumbs { display: flex; gap: 1rem; flex-wrap: wrap; }
+  .thumbs figure { margin: 0; text-align: center; }
+  .thumbs img { max-width: 220px; border: 1px solid #e2e8f0; border-radius: 6px; display: block; }
+  .thumbs figcaption { font-size: 0.7rem; color: #94a3b8; margin-top: 0.25rem; }
+</style>
+</head>
+<body>
+  <h1>PDF Comparison Report</h1>
+  <p class="summary">
+    <strong>${escapeHtml(nameA)}</strong> (${result.pageCountA} pages) vs <strong>${escapeHtml(nameB)}</strong> (${result.pageCountB} pages)
+    &mdash; ${changed} changed, ${identical} identical${onlyInA ? `, ${onlyInA} only in ${escapeHtml(nameA)}` : ''}${onlyInB ? `, ${onlyInB} only in ${escapeHtml(nameB)}` : ''}
+  </p>
+  ${rows}
+</body>
+</html>`;
+
+  return new Blob([html], { type: 'text/html' });
 }

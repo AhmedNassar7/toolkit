@@ -24,6 +24,7 @@ import SignPdf from './tool-pages/SignPdf';
 import EditPdf from './tool-pages/EditPdf';
 import RedactPdf from './tool-pages/RedactPdf';
 import PdfForms from './tool-pages/PdfForms';
+import ComparePdf from './tool-pages/ComparePdf';
 
 const toolComponents: Record<string, React.ComponentType> = {
   'compress-pdf': CompressPdf,
@@ -65,7 +66,7 @@ const toolComponents: Record<string, React.ComponentType> = {
   // Intelligence - not yet implemented, honestly labeled
   'scan-to-pdf': JpgToPdf,
   'ocr-pdf': ComingSoon,
-  'compare-pdf': ComingSoon,
+  'compare-pdf': ComparePdf,
   'ai-summarizer': ComingSoon,
   'translate-pdf': ComingSoon,
   // QR Code

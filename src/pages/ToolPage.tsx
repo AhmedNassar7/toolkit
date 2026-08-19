@@ -138,8 +138,8 @@ export default function ToolPage({ processor, optionsComponent: OptionsComponent
           <div className="space-y-6">
             <FileUpload
               accept={tool.acceptTypes}
-              multiple={tool.id === 'merge-pdf' || tool.id === 'jpg-to-pdf'}
-              maxFiles={tool.id === 'merge-pdf' || tool.id === 'jpg-to-pdf' ? 20 : 1}
+              multiple={tool.id === 'merge-pdf' || tool.id === 'jpg-to-pdf' || tool.id === 'compare-pdf'}
+              maxFiles={tool.id === 'compare-pdf' ? 2 : tool.id === 'merge-pdf' || tool.id === 'jpg-to-pdf' ? 20 : 1}
               onFilesSelected={handleFilesSelected}
               files={files}
               onRemoveFile={handleRemoveFile}

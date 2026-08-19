@@ -393,7 +393,6 @@ export const tools: Tool[] = [
     color: '#1abc9c',
     acceptTypes: '.pdf',
     outputLabel: 'Comparison Report',
-    comingSoon: true,
   },
   {
     id: 'ai-summarizer',
