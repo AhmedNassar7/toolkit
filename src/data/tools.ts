@@ -376,13 +376,12 @@ export const tools: Tool[] = [
   {
     id: 'ocr-pdf',
     name: 'OCR PDF',
-    description: 'Easily convert scanned PDF into searchable and selectable documents.',
+    description: 'Extract the text from a scanned PDF or photo. Get back a searchable PDF plus a plain-text file.',
     icon: Eye,
     category: 'intelligence',
     color: '#1abc9c',
-    acceptTypes: '.pdf',
-    outputLabel: 'OCR PDF',
-    comingSoon: true,
+    acceptTypes: '.pdf,.png,.jpg,.jpeg,.webp',
+    outputLabel: 'OCR Results',
   },
   {
     id: 'compare-pdf',

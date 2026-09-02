@@ -22,6 +22,7 @@ import PngToSvg from './tool-pages/PngToSvg';
 import PdfToSvg from './tool-pages/PdfToSvg';
 import SignPdf from './tool-pages/SignPdf';
 import ScanToPdf from './tool-pages/ScanToPdf';
+import OcrPdf from './tool-pages/OcrPdf';
 import EditPdf from './tool-pages/EditPdf';
 import RedactPdf from './tool-pages/RedactPdf';
 import PdfForms from './tool-pages/PdfForms';
@@ -66,7 +67,7 @@ const toolComponents: Record<string, React.ComponentType> = {
   'redact-pdf': RedactPdf,
   // Intelligence
   'scan-to-pdf': ScanToPdf,
-  'ocr-pdf': ComingSoon,
+  'ocr-pdf': OcrPdf,
   'compare-pdf': ComparePdf,
   'ai-summarizer': ComingSoon,
   'translate-pdf': ComingSoon,

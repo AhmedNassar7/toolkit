@@ -12,6 +12,7 @@
 | Styling | Tailwind CSS 3.4 |
 | PDF engine | [`pdf-lib-with-encrypt`](https://www.npmjs.com/package/pdf-lib-with-encrypt) (a `pdf-lib` fork adding real password encryption) + [`pdfjs-dist`](https://www.npmjs.com/package/pdfjs-dist) |
 | Office generation | `docx`, `pptxgenjs`, `exceljs` — build `.docx`/`.pptx`/`.xlsx` entirely client-side |
+| OCR | `tesseract.js` (WASM) — worker/core/`eng.traineddata.gz` vendored in `public/tesseract/`, no CDN at runtime |
 | Misc | `jszip` (multi-file ZIP downloads), `file-saver`, `qrcode` + `jsqr` (QR generate/scan), `lucide-react` (icons) |
 | Type checking | TypeScript (`tsc --noEmit -p tsconfig.app.json`) — `strict`, `noUnusedLocals`, `noUnusedParameters` all on |
 | Linting | ESLint 9 flat config ([`eslint.config.js`](../eslint.config.js)) — `@eslint/js` recommended + `typescript-eslint` recommended + `react-hooks`/`react-refresh` plugins |

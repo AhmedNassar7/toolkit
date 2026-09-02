@@ -13,9 +13,9 @@ with no upload and no backend for the core app.
 
 Toolkit is a single-page React app with 35 PDF/image/SVG tools organized
 into six categories (Organize, Optimize, Convert, Edit, Security,
-Intelligence). 27 are fully working today, 6 more work at basic
+Intelligence). 26 are fully working today, 6 more work at basic
 text-only fidelity while a higher-fidelity path is built out, and the
-remaining ones are honestly marked "Coming Soon" instead of shipped
+remaining 3 are honestly marked "Coming Soon" instead of shipped
 half-broken. Everything runs in-browser; the one optional exception is a
 self-hosted LibreOffice service for higher-fidelity Office↔PDF conversion.
 
@@ -25,6 +25,7 @@ self-hosted LibreOffice service for higher-fidelity Office↔PDF conversion.
 - **Convert** — PDF ⇄ Word/PowerPoint/Excel/PNG/JPG/SVG, HTML → PDF, JPG → PDF
 - **Edit & secure** — watermark, page numbers, sign (type your name, draw, or upload a signature, optionally date it, then drag/resize it on the page), password-protect/unlock with real encryption
 - **Capture** — scan pages with your device camera, reorder them, and export a multi-page PDF
+- **OCR** — extract text from a scanned PDF or photo (Tesseract, in-browser); get a searchable PDF plus a `.txt`
 - **QR codes** — scan or generate
 - **Privacy by default** — no upload, no account, no ads; files never leave your device except through the one opt-in server path below
 

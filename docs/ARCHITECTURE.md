@@ -62,6 +62,7 @@ src/
     pdfProcessor.ts          Core PDF logic - unit tested (tests/pdfProcessor.test.ts)
     svgProcessor.ts          SVG ⇄ raster conversion
     officeExportProcessor.ts PDF → Word/PowerPoint/Excel extraction + generation
+    ocrProcessor.ts          tesseract.js OCR → searchable PDF + plain text
   data/
     tools.ts                 Tool registry: id, name, category, icon,
                              comingSoon / improving flags
@@ -107,6 +108,13 @@ steps if you're adding one.
 - **The `pdfjs-dist` worker is served locally, not from a CDN**, at
   `${import.meta.env.BASE_URL}pdf.worker.min.mjs`, so it resolves correctly
   under the `/toolkit/` GitHub Pages base path in production.
+- **OCR runs client-side with vendored assets.** `ocrProcessor.ts` uses
+  `tesseract.js`, but its worker, WASM core, and `eng.traineddata.gz` are
+  committed under `public/tesseract/` (~11 MB) rather than pulled from
+  tesseract.js's default CDN — `workerPath`/`corePath`/`langPath` point at
+  `${import.meta.env.BASE_URL}tesseract/`. They're only requested the first
+  time someone runs the tool. Adding a language means vendoring its
+  `<lang>.traineddata.gz` alongside.
 - **`tools.ts`'s `category` field is the actual grouping used on the
   homepage and in the header nav** — e.g. QR Code is categorized `convert`
   in the data, so it appears under "Convert PDF" in the UI even though it's
