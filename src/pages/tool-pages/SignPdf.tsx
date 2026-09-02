@@ -9,11 +9,15 @@ import {
   type SignaturePlacement,
 } from '../../utils/pdfProcessor';
 
+type SetOptions = React.Dispatch<React.SetStateAction<Record<string, unknown>>>;
+
 const CANVAS_WIDTH = 600;
 const CANVAS_HEIGHT = 200;
 const MAX_RENDER_WIDTH = 640;
 const STORAGE_KEY = 'toolkit:sign:last-signature';
 const DEFAULT_ASPECT = 0.32; // signature height / width, until the real image loads
+const MIN_WIDTH_RATIO = 0.05;
+const MAX_WIDTH_RATIO = 0.9;
 
 type SignatureMode = 'draw' | 'type' | 'upload';
 
@@ -36,6 +40,8 @@ const modeTabs: { value: SignatureMode; label: string }[] = [
   { value: 'type', label: 'Type' },
   { value: 'upload', label: 'Upload' },
 ];
+
+const clampWidthRatio = (r: number) => Math.min(MAX_WIDTH_RATIO, Math.max(MIN_WIDTH_RATIO, r));
 
 /** Render typed text in a script font onto a transparent PNG data URL. */
 async function renderTypedSignature(name: string, fontStack: string): Promise<string | undefined> {
@@ -76,6 +82,49 @@ async function renderTypedSignature(name: string, fontStack: string): Promise<st
   return canvas.toDataURL('image/png');
 }
 
+/** Composite the signature mark with a "Signed <date>" line underneath. */
+function composeWithDate(signature: string): Promise<string> {
+  return new Promise((resolve) => {
+    const img = new window.Image();
+    img.onerror = () => resolve(signature);
+    img.onload = () => {
+      const dateStr = new Date().toLocaleDateString(undefined, {
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+      });
+      const label = `Signed ${dateStr}`;
+      const fontSize = Math.max(18, Math.round(img.height * 0.16));
+      const gap = Math.round(fontSize * 0.55);
+      const font = `${fontSize}px 'Inter', system-ui, -apple-system, sans-serif`;
+
+      const measure = document.createElement('canvas').getContext('2d');
+      if (!measure) {
+        resolve(signature);
+        return;
+      }
+      measure.font = font;
+      const textWidth = measure.measureText(label).width;
+
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.ceil(Math.max(img.width, textWidth));
+      canvas.height = Math.ceil(img.height + gap + fontSize * 1.3);
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        resolve(signature);
+        return;
+      }
+      ctx.drawImage(img, 0, 0);
+      ctx.font = font;
+      ctx.fillStyle = '#4b5563';
+      ctx.textBaseline = 'top';
+      ctx.fillText(label, 0, img.height + gap);
+      resolve(canvas.toDataURL('image/png'));
+    };
+    img.src = signature;
+  });
+}
+
 function readSavedSignature(): string | undefined {
   try {
     return localStorage.getItem(STORAGE_KEY) ?? undefined;
@@ -99,7 +148,7 @@ function SignatureOptions({
   files,
 }: {
   options: Record<string, unknown>;
-  setOptions: (o: Record<string, unknown>) => void;
+  setOptions: SetOptions;
   files: File[];
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -110,9 +159,14 @@ function SignatureOptions({
   const dragRef = useRef<{ startX: number; startY: number; originX: number; originY: number } | null>(
     null
   );
+  const resizeRef = useRef<{ startX: number; originW: number } | null>(null);
 
   const [mode, setMode] = useState<SignatureMode>('draw');
-  const [hasSignature, setHasSignature] = useState(Boolean(options.signatureDataUrl));
+  const [rawSignature, setRawSignature] = useState<string | undefined>(
+    options.rawSignature as string | undefined
+  );
+  const [addDate, setAddDate] = useState(Boolean(options.signDate));
+  const [hasSignature, setHasSignature] = useState(Boolean(options.rawSignature));
   const [typedName, setTypedName] = useState((options.typedName as string) ?? '');
   const [typedFont, setTypedFont] = useState((options.typedFont as string) ?? signatureFonts[0].value);
   const [sigAspect, setSigAspect] = useState(DEFAULT_ASPECT);
@@ -154,21 +208,41 @@ function SignatureOptions({
 
   // Restore a previously used signature so returning users don't recreate it.
   useEffect(() => {
-    if (options.signatureDataUrl) return;
+    if (rawSignature) return;
     const saved = readSavedSignature();
     if (!saved) return;
-    setOptions({ ...options, signatureDataUrl: saved });
+    setRawSignature(saved);
     setHasSignature(true);
     setMode('upload');
     drawImageOntoCanvas(saved);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Keep the aspect ratio of the signature box in sync with the real image, and
-  // persist the latest signature for next time.
+  // Turn the raw signature mark into the final stamped image (optionally with a
+  // dated caption), and persist the mark for next time.
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!rawSignature) {
+      setOptions((prev) => ({ ...prev, signatureDataUrl: undefined, rawSignature: undefined }));
+      return;
+    }
+
+    writeSavedSignature(rawSignature);
+    (async () => {
+      const final = addDate ? await composeWithDate(rawSignature) : rawSignature;
+      if (cancelled) return;
+      setOptions((prev) => ({ ...prev, signatureDataUrl: final, rawSignature, signDate: addDate }));
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [rawSignature, addDate, setOptions]);
+
+  // Keep the signature-box aspect ratio in sync with the final image.
   useEffect(() => {
     if (!signatureDataUrl) return;
-    writeSavedSignature(signatureDataUrl);
     const img = new window.Image();
     img.onload = () => {
       if (img.width > 0) setSigAspect(img.height / img.width);
@@ -176,7 +250,7 @@ function SignatureOptions({
     img.src = signatureDataUrl;
   }, [signatureDataUrl]);
 
-  // Live-render the typed signature into the preview canvas and the option payload.
+  // Live-render the typed signature into the capture canvas.
   useEffect(() => {
     if (mode !== 'type') return;
     let cancelled = false;
@@ -185,14 +259,15 @@ function SignatureOptions({
       const dataUrl = await renderTypedSignature(typedName, typedFont);
       if (cancelled) return;
       clearCanvas();
+      setOptions((prev) => ({ ...prev, typedName, typedFont }));
       if (!dataUrl) {
         setHasSignature(false);
-        setOptions({ ...options, signatureDataUrl: undefined, typedName, typedFont });
+        setRawSignature(undefined);
         return;
       }
       drawImageOntoCanvas(dataUrl);
       setHasSignature(true);
-      setOptions({ ...options, signatureDataUrl: dataUrl, typedName, typedFont });
+      setRawSignature(dataUrl);
     })();
 
     return () => {
@@ -278,8 +353,8 @@ function SignatureOptions({
     if (!pageSize || !signatureDataUrl || placement) return;
     const widthRatio = 0.25;
     const drawHeightRatio = widthRatio * sigAspect * (pageSize.width / pageSize.height);
-    setOptions({
-      ...options,
+    setOptions((prev) => ({
+      ...prev,
       placement: {
         pageIndex,
         widthRatio,
@@ -287,31 +362,36 @@ function SignatureOptions({
         yRatio: Math.max(0, 1 - drawHeightRatio - 0.04),
         allPages: false,
       } satisfies SignaturePlacement,
-    });
+    }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pageSize, signatureDataUrl, sigAspect]);
 
   // Keep the placement bound to whichever page is on screen.
   useEffect(() => {
     if (!placement || placement.pageIndex === pageIndex) return;
-    setOptions({ ...options, placement: { ...placement, pageIndex } });
+    setOptions((prev) => {
+      const p = prev.placement as SignaturePlacement | undefined;
+      return p ? { ...prev, placement: { ...p, pageIndex } } : prev;
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pageIndex]);
 
   const updatePlacement = useCallback(
     (patch: Partial<SignaturePlacement>) => {
-      if (!placement) return;
-      const next = { ...placement, ...patch };
-      if (!pageSize) {
-        setOptions({ ...options, placement: next });
-        return;
-      }
-      const drawHeightRatio = next.widthRatio * sigAspect * (pageSize.width / pageSize.height);
-      next.xRatio = Math.min(Math.max(0, next.xRatio), Math.max(0, 1 - next.widthRatio));
-      next.yRatio = Math.min(Math.max(0, next.yRatio), Math.max(0, 1 - drawHeightRatio));
-      setOptions({ ...options, placement: next });
+      setOptions((prev) => {
+        const current = prev.placement as SignaturePlacement | undefined;
+        if (!current) return prev;
+        const next = { ...current, ...patch };
+        next.widthRatio = clampWidthRatio(next.widthRatio);
+        if (pageSize) {
+          const drawHeightRatio = next.widthRatio * sigAspect * (pageSize.width / pageSize.height);
+          next.xRatio = Math.min(Math.max(0, next.xRatio), Math.max(0, 1 - next.widthRatio));
+          next.yRatio = Math.min(Math.max(0, next.yRatio), Math.max(0, 1 - drawHeightRatio));
+        }
+        return { ...prev, placement: next };
+      });
     },
-    [placement, pageSize, sigAspect, options, setOptions]
+    [pageSize, sigAspect, setOptions]
   );
 
   // ---- Signature capture (draw / type / upload) ----
@@ -323,10 +403,11 @@ function SignatureOptions({
       clearCanvas();
       if (next !== 'type') {
         setHasSignature(false);
-        setOptions({ ...options, signatureDataUrl: undefined, placement: undefined });
+        setRawSignature(undefined);
+        setOptions((prev) => ({ ...prev, placement: undefined }));
       }
     },
-    [mode, clearCanvas, options, setOptions]
+    [mode, clearCanvas, setOptions]
   );
 
   const pointFromEvent = useCallback((e: React.PointerEvent<HTMLCanvasElement>) => {
@@ -373,40 +454,35 @@ function SignatureOptions({
     const canvas = canvasRef.current;
     if (!canvas) return;
     setHasSignature(true);
-    setOptions({ ...options, signatureDataUrl: canvas.toDataURL('image/png') });
-  }, [options, setOptions]);
+    setRawSignature(canvas.toDataURL('image/png'));
+  }, []);
 
   const handleClear = useCallback(() => {
     clearCanvas();
     setHasSignature(false);
+    setRawSignature(undefined);
     if (mode === 'type') setTypedName('');
-    setOptions({ ...options, signatureDataUrl: undefined, placement: undefined });
-  }, [clearCanvas, mode, options, setOptions]);
+    setOptions((prev) => ({ ...prev, placement: undefined }));
+  }, [clearCanvas, mode, setOptions]);
 
-  const handleUpload = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
-      const file = e.target.files?.[0];
-      if (!file) return;
-      const reader = new FileReader();
-      reader.onload = () => {
-        const dataUrl = reader.result as string;
-        setOptions({ ...options, signatureDataUrl: dataUrl });
-        setHasSignature(true);
-        drawImageOntoCanvas(dataUrl);
-      };
-      reader.readAsDataURL(file);
-    },
-    [drawImageOntoCanvas, options, setOptions]
-  );
+  const handleUpload = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = reader.result as string;
+      setRawSignature(dataUrl);
+      setHasSignature(true);
+      drawImageOntoCanvas(dataUrl);
+    };
+    reader.readAsDataURL(file);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  // ---- Placement drag ----
+  // ---- Placement drag / resize ----
 
-  const boxPx = pageSize
-    ? {
-        w: (placement?.widthRatio ?? 0.25) * pageSize.width * scale,
-      }
-    : null;
-  const boxHeightPx = boxPx ? boxPx.w * sigAspect : 0;
+  const boxWidthPx = pageSize ? (placement?.widthRatio ?? 0.25) * pageSize.width * scale : 0;
+  const boxHeightPx = boxWidthPx * sigAspect;
 
   const handleOverlayPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!placement || !pageSize || !overlayRef.current) return;
@@ -431,10 +507,25 @@ function SignatureOptions({
     };
   };
 
+  const handleResizePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!placement) return;
+    e.stopPropagation();
+    e.currentTarget.setPointerCapture(e.pointerId);
+    resizeRef.current = { startX: e.clientX, originW: placement.widthRatio };
+  };
+
   const handleBoxPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    const rect = overlayRef.current?.getBoundingClientRect();
+    if (!rect) return;
+
+    if (resizeRef.current) {
+      const dx = (e.clientX - resizeRef.current.startX) / rect.width;
+      updatePlacement({ widthRatio: resizeRef.current.originW + dx });
+      return;
+    }
+
     const drag = dragRef.current;
-    if (!drag || !overlayRef.current) return;
-    const rect = overlayRef.current.getBoundingClientRect();
+    if (!drag) return;
     updatePlacement({
       xRatio: drag.originX + (e.clientX - drag.startX) / rect.width,
       yRatio: drag.originY + (e.clientY - drag.startY) / rect.height,
@@ -443,9 +534,11 @@ function SignatureOptions({
 
   const handleBoxPointerUp = () => {
     dragRef.current = null;
+    resizeRef.current = null;
   };
 
   const widthPercentValue = (options.widthPercent as number) ?? 25;
+  const sizePercent = Math.round((placement?.widthRatio ?? 0.25) * 100);
 
   return (
     <div className="space-y-4">
@@ -537,6 +630,17 @@ function SignatureOptions({
             </label>
           )}
         </div>
+
+        <label className="flex items-center gap-2 mt-2 text-xs text-gray-600 dark:text-gray-400">
+          <input
+            type="checkbox"
+            checked={addDate}
+            onChange={(e) => setAddDate(e.target.checked)}
+            className="accent-red-500"
+          />
+          Add today's date beneath the signature
+        </label>
+
         {!hasSignature && (
           <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
             {mode === 'draw'
@@ -561,7 +665,7 @@ function SignatureOptions({
         <div className="space-y-3">
           <div className="flex items-center justify-between">
             <label className="text-sm text-gray-600 dark:text-gray-400">
-              {hasSignature ? 'Drag your signature where it belongs' : 'Add a signature above first'}
+              {hasSignature ? 'Drag to move · drag the corner to resize' : 'Add a signature above first'}
             </label>
             {numPages > 1 && (
               <div className="flex items-center gap-2">
@@ -613,7 +717,7 @@ function SignatureOptions({
                       style={{
                         left: placement.xRatio * pageSize.width * scale,
                         top: placement.yRatio * pageSize.height * scale,
-                        width: boxPx?.w,
+                        width: boxWidthPx,
                         height: boxHeightPx,
                       }}
                     >
@@ -622,6 +726,11 @@ function SignatureOptions({
                         alt="signature"
                         draggable={false}
                         className="w-full h-full object-contain select-none pointer-events-none"
+                      />
+                      <div
+                        onPointerDown={handleResizePointerDown}
+                        className="absolute -bottom-1.5 -right-1.5 w-3.5 h-3.5 rounded-sm bg-red-500 border border-white shadow cursor-se-resize"
+                        style={{ touchAction: 'none' }}
                       />
                     </div>
                   )}
@@ -632,14 +741,14 @@ function SignatureOptions({
 
           <div>
             <label className="block text-sm text-gray-600 dark:text-gray-400 mb-1">
-              Size: {Math.round((placement?.widthRatio ?? 0.25) * 100)}% of page width
+              Size: {sizePercent}% of page width
             </label>
             <input
               type="range"
-              min="10"
-              max="60"
+              min="5"
+              max="90"
               step="1"
-              value={Math.round((placement?.widthRatio ?? 0.25) * 100)}
+              value={sizePercent}
               onChange={(e) => updatePlacement({ widthRatio: parseInt(e.target.value, 10) / 100 })}
               disabled={!placement}
               className="w-full accent-red-500 disabled:opacity-40"
@@ -669,7 +778,7 @@ function FallbackPlacement({
   widthPercent,
 }: {
   options: Record<string, unknown>;
-  setOptions: (o: Record<string, unknown>) => void;
+  setOptions: SetOptions;
   widthPercent: number;
 }) {
   return (
@@ -681,7 +790,7 @@ function FallbackPlacement({
         <label className="block text-sm text-gray-600 dark:text-gray-400 mb-1">Apply to</label>
         <select
           value={(options.target as SignatureTarget) ?? 'last'}
-          onChange={(e) => setOptions({ ...options, target: e.target.value })}
+          onChange={(e) => setOptions((prev) => ({ ...prev, target: e.target.value }))}
           className="w-full px-4 py-2.5 border border-gray-200 dark:border-gray-700 rounded-xl text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-red-500/30 focus:border-red-500 transition-colors"
         >
           <option value="last">Last page</option>
@@ -693,7 +802,7 @@ function FallbackPlacement({
         <label className="block text-sm text-gray-600 dark:text-gray-400 mb-1">Position</label>
         <select
           value={(options.anchor as SignatureAnchor) ?? 'bottom-right'}
-          onChange={(e) => setOptions({ ...options, anchor: e.target.value })}
+          onChange={(e) => setOptions((prev) => ({ ...prev, anchor: e.target.value }))}
           className="w-full px-4 py-2.5 border border-gray-200 dark:border-gray-700 rounded-xl text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-red-500/30 focus:border-red-500 transition-colors"
         >
           {anchors.map((a) => (
@@ -713,7 +822,7 @@ function FallbackPlacement({
           max="50"
           step="5"
           value={widthPercent}
-          onChange={(e) => setOptions({ ...options, widthPercent: parseInt(e.target.value, 10) })}
+          onChange={(e) => setOptions((prev) => ({ ...prev, widthPercent: parseInt(e.target.value, 10) }))}
           className="w-full accent-red-500"
         />
       </div>
@@ -729,6 +838,7 @@ async function processor(files: File[], options?: Record<string, unknown>): Prom
   }
 
   const placement = options?.placement as SignaturePlacement | undefined;
+  const dated = Boolean(options?.signDate);
 
   if (placement) {
     const blob = await signPdf(file, signatureDataUrl, { placement });
@@ -737,6 +847,7 @@ async function processor(files: File[], options?: Record<string, unknown>): Prom
       info: {
         page: placement.allPages ? 'All pages' : `Page ${placement.pageIndex + 1}`,
         size: `${Math.round(placement.widthRatio * 100)}% width`,
+        dated: dated ? 'Yes' : 'No',
       },
     };
   }
@@ -751,6 +862,7 @@ async function processor(files: File[], options?: Record<string, unknown>): Prom
     info: {
       page: target === 'all' ? 'All pages' : target === 'first' ? 'First page' : 'Last page',
       position: anchors.find((a) => a.value === anchor)?.label ?? anchor,
+      dated: dated ? 'Yes' : 'No',
     },
   };
 }

@@ -12,7 +12,7 @@ interface ToolPageProps {
   processor: (files: File[], options?: Record<string, unknown>) => Promise<ProcessResult>;
   optionsComponent?: React.ComponentType<{
     options: Record<string, unknown>;
-    setOptions: (opts: Record<string, unknown>) => void;
+    setOptions: React.Dispatch<React.SetStateAction<Record<string, unknown>>>;
     files: File[];
   }>;
 }

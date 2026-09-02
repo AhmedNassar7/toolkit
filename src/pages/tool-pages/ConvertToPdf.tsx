@@ -1,3 +1,4 @@
+import type { PDFFont } from 'pdf-lib-with-encrypt';
 import ToolPage, { type ProcessResult } from '../ToolPage';
 
 // Character replacements for WinAnsi compatibility (use Unicode escapes to avoid parse issues)
@@ -367,7 +368,7 @@ async function processor(files: File[]): Promise<ProcessResult> {
   }
 
   // Helper: split text to fit width using font measurements
-  function splitTextToFit(text: string, fontObj: any, size: number, remainingWidth: number) {
+  function splitTextToFit(text: string, fontObj: PDFFont, size: number, remainingWidth: number) {
     if (!text) return ['', ''];
     let low = 0;
     let high = text.length;
@@ -426,7 +427,7 @@ async function processor(files: File[]): Promise<ProcessResult> {
       if (isList) prefix = '• ';
 
       // Start a new line buffer
-      let lineBuffer: Array<{ text: string; fontObj: any }> = [];
+      let lineBuffer: Array<{ text: string; fontObj: PDFFont }> = [];
 
       // Helper to flush line buffer to page
       function flushLine() {
