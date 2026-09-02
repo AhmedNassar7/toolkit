@@ -294,7 +294,7 @@ export const tools: Tool[] = [
   {
     id: 'sign-pdf',
     name: 'Sign PDF',
-    description: 'Draw or upload your signature and stamp it onto any page of your PDF.',
+    description: 'Type your name for an instant online signature, or draw or upload one, then stamp it onto any page of your PDF.',
     icon: Pen,
     category: 'edit',
     color: '#f39c12',
