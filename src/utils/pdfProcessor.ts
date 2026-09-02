@@ -565,6 +565,104 @@ export async function imagesToPdf(files: File[]): Promise<Blob> {
   return new Blob([new Uint8Array(bytes)], { type: 'application/pdf' });
 }
 
+export type ScanPageSize = 'fit' | 'a4' | 'letter';
+export type ScanFilter = 'none' | 'grayscale' | 'bw';
+
+const SCAN_PAGE_DIMENSIONS: Record<Exclude<ScanPageSize, 'fit'>, { width: number; height: number }> = {
+  a4: { width: 595.28, height: 841.89 },
+  letter: { width: 612, height: 792 },
+};
+
+/** Re-encode one captured photo as a JPEG, optionally as a cleaned-up document scan. */
+async function normalizeScanImage(source: Blob, filter: ScanFilter): Promise<{ bytes: ArrayBuffer; width: number; height: number }> {
+  const bitmap = await createImageBitmap(source);
+  const canvas = document.createElement('canvas');
+  canvas.width = bitmap.width;
+  canvas.height = bitmap.height;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('Could not process the captured image.');
+
+  if (filter === 'grayscale' || filter === 'bw') {
+    ctx.filter = 'grayscale(1) contrast(1.15) brightness(1.05)';
+  }
+  ctx.drawImage(bitmap, 0, 0);
+  ctx.filter = 'none';
+  bitmap.close();
+
+  if (filter === 'bw') {
+    const image = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const data = image.data;
+    for (let i = 0; i < data.length; i += 4) {
+      const v = data[i] < 135 ? 0 : 255;
+      data[i] = v;
+      data[i + 1] = v;
+      data[i + 2] = v;
+    }
+    ctx.putImageData(image, 0, 0);
+  }
+
+  const blob: Blob = await new Promise((resolve, reject) =>
+    canvas.toBlob(
+      (b) => (b ? resolve(b) : reject(new Error('Could not encode the scanned page.'))),
+      'image/jpeg',
+      0.9
+    )
+  );
+  return { bytes: await blob.arrayBuffer(), width: canvas.width, height: canvas.height };
+}
+
+/**
+ * Build a PDF from photos captured with the device camera (or picked from disk).
+ * `pageSize: 'fit'` makes each page match its photo; 'a4'/'letter' place the photo
+ * centred on a fixed page, switching to landscape when the photo is wider than tall.
+ */
+export async function scanToPdf(
+  images: Blob[],
+  options?: { pageSize?: ScanPageSize; filter?: ScanFilter }
+): Promise<Blob> {
+  if (images.length === 0) {
+    throw new Error('Capture or add at least one page before creating a PDF.');
+  }
+
+  const pageSize = options?.pageSize ?? 'fit';
+  const filter = options?.filter ?? 'none';
+  const margin = 24;
+  const pdfDoc = await PDFDocument.create();
+
+  for (const source of images) {
+    const { bytes, width: imgWidth, height: imgHeight } = await normalizeScanImage(source, filter);
+    const image = await pdfDoc.embedJpg(bytes);
+
+    if (pageSize === 'fit') {
+      const page = pdfDoc.addPage([imgWidth, imgHeight]);
+      page.drawImage(image, { x: 0, y: 0, width: imgWidth, height: imgHeight });
+      continue;
+    }
+
+    const base = SCAN_PAGE_DIMENSIONS[pageSize];
+    const landscape = imgWidth > imgHeight;
+    const pageWidth = landscape ? base.height : base.width;
+    const pageHeight = landscape ? base.width : base.height;
+    const page = pdfDoc.addPage([pageWidth, pageHeight]);
+
+    const scale = Math.min(
+      (pageWidth - margin * 2) / imgWidth,
+      (pageHeight - margin * 2) / imgHeight
+    );
+    const drawWidth = imgWidth * scale;
+    const drawHeight = imgHeight * scale;
+    page.drawImage(image, {
+      x: (pageWidth - drawWidth) / 2,
+      y: (pageHeight - drawHeight) / 2,
+      width: drawWidth,
+      height: drawHeight,
+    });
+  }
+
+  const bytes = await pdfDoc.save();
+  return new Blob([new Uint8Array(bytes)], { type: 'application/pdf' });
+}
+
 export interface RedactBox {
   pageIndex: number;
   /** Point coordinates, top-left origin, y increases downward (matches an on-screen page render at scale 1). */

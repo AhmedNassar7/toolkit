@@ -366,11 +366,11 @@ export const tools: Tool[] = [
   {
     id: 'scan-to-pdf',
     name: 'Scan to PDF',
-    description: 'Capture document scans from your mobile device and send them instantly to your browser.',
+    description: 'Use your device camera to capture pages, reorder them, and turn them into a multi-page PDF.',
     icon: ScanLine,
     category: 'intelligence',
     color: '#1abc9c',
-    acceptTypes: '.jpg,.jpeg,.png',
+    acceptTypes: 'image/*',
     outputLabel: 'PDF Document',
   },
   {

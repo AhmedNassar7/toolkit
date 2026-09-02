@@ -53,10 +53,11 @@ src/
   pages/
     HomePage.tsx            Tool grid, search, category tabs
     ToolPage.tsx             Generic upload → processing → done state machine
-                             shared by every tool page
+                             shared by almost every tool page
     ToolRouter.tsx           Maps a tool's URL id to its page component
-    tool-pages/*.tsx         One thin wrapper per tool: a processor() function
-                             passed into <ToolPage>
+    tool-pages/*.tsx         Mostly a thin wrapper per tool: a processor()
+                             function passed into <ToolPage>. ScanToPdf.tsx is
+                             standalone (camera capture, no file upload).
   utils/
     pdfProcessor.ts          Core PDF logic - unit tested (tests/pdfProcessor.test.ts)
     svgProcessor.ts          SVG ⇄ raster conversion
@@ -81,6 +82,13 @@ steps if you're adding one.
   wraps a PNG/JPG as a base64 `<image>` inside an SVG container at native
   pixel size. This preserves exact position/size without a tracing
   dependency, but the output isn't editable as paths.
+- **Scan to PDF is the one tool that doesn't use `ToolPage`.** It needs a live
+  `getUserMedia` camera preview, per-shot capture, and page reordering before
+  anything is processed — none of which fits the upload-first state machine —
+  so [`ScanToPdf.tsx`](../src/pages/tool-pages/ScanToPdf.tsx) owns its own
+  capture → processing → done flow and calls `scanToPdf` in `pdfProcessor.ts`.
+  A file picker (`<input capture>`) is offered as a fallback for devices with
+  no camera or blocked permission.
 - **The progress bar is simulated, not measured.** `ToolPage.tsx` advances
   progress with a `setInterval` tick while `processor()` runs, then jumps to
   100% on completion — there's no byte-level progress signal to hook into

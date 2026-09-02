@@ -21,6 +21,7 @@ import SvgToPdf from './tool-pages/SvgToPdf';
 import PngToSvg from './tool-pages/PngToSvg';
 import PdfToSvg from './tool-pages/PdfToSvg';
 import SignPdf from './tool-pages/SignPdf';
+import ScanToPdf from './tool-pages/ScanToPdf';
 import EditPdf from './tool-pages/EditPdf';
 import RedactPdf from './tool-pages/RedactPdf';
 import PdfForms from './tool-pages/PdfForms';
@@ -63,8 +64,8 @@ const toolComponents: Record<string, React.ComponentType> = {
   // Security
   'unlock-pdf': UnlockPdf,
   'redact-pdf': RedactPdf,
-  // Intelligence - not yet implemented, honestly labeled
-  'scan-to-pdf': JpgToPdf,
+  // Intelligence
+  'scan-to-pdf': ScanToPdf,
   'ocr-pdf': ComingSoon,
   'compare-pdf': ComparePdf,
   'ai-summarizer': ComingSoon,
