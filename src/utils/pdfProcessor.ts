@@ -187,10 +187,33 @@ export async function watermarkPdf(
 export type SignatureAnchor = 'bottom-right' | 'bottom-left' | 'top-right' | 'top-left';
 export type SignatureTarget = 'first' | 'last' | 'all';
 
+/**
+ * Exact signature placement produced by the interactive page preview. All
+ * ratios are 0..1 with a top-left origin (matching an on-screen page render);
+ * `signPdf` converts to PDF's bottom-left origin internally.
+ */
+export interface SignaturePlacement {
+  /** 0-based page index the signature is dropped on (ignored when `allPages`). */
+  pageIndex: number;
+  /** Left edge of the signature as a fraction of page width. */
+  xRatio: number;
+  /** Top edge of the signature as a fraction of page height. */
+  yRatio: number;
+  /** Signature width as a fraction of page width. */
+  widthRatio: number;
+  /** Stamp the same spot on every page (e.g. repeated initials). */
+  allPages?: boolean;
+}
+
 export async function signPdf(
   file: File | Blob,
   signatureDataUrl: string,
-  options?: { target?: SignatureTarget; anchor?: SignatureAnchor; widthPercent?: number }
+  options?: {
+    target?: SignatureTarget;
+    anchor?: SignatureAnchor;
+    widthPercent?: number;
+    placement?: SignaturePlacement;
+  }
 ): Promise<Blob> {
   const arrayBuffer = await file.arrayBuffer();
   const pdfDoc = await PDFDocument.load(arrayBuffer, { ignoreEncryption: true });
@@ -200,6 +223,28 @@ export async function signPdf(
   const image = signatureDataUrl.startsWith('data:image/png')
     ? await pdfDoc.embedPng(imageBytes)
     : await pdfDoc.embedJpg(imageBytes);
+
+  // Interactive placement path: precise per-page position from the preview.
+  if (options?.placement) {
+    const { pageIndex, xRatio, yRatio, widthRatio, allPages } = options.placement;
+    const aspect = image.height / image.width;
+    const placementPages = allPages
+      ? pages
+      : [pages[pageIndex] ?? pages[pages.length - 1]];
+
+    for (const page of placementPages) {
+      const { width: pageWidth, height: pageHeight } = page.getSize();
+      const drawWidth = pageWidth * widthRatio;
+      const drawHeight = drawWidth * aspect;
+      const x = xRatio * pageWidth;
+      // Flip from a top-left origin (preview) to PDF's bottom-left origin.
+      const y = pageHeight - yRatio * pageHeight - drawHeight;
+      page.drawImage(image, { x, y, width: drawWidth, height: drawHeight });
+    }
+
+    const placedBytes = await pdfDoc.save();
+    return new Blob([new Uint8Array(placedBytes)], { type: 'application/pdf' });
+  }
 
   const target = options?.target ?? 'last';
   const anchor = options?.anchor ?? 'bottom-right';

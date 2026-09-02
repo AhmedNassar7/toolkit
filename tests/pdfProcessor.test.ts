@@ -434,6 +434,40 @@ describe('pdfProcessor', () => {
 
       expect(pdf.getPageCount()).toBe(1);
     });
+
+    it('places the signature via an exact placement without changing the document shape', async () => {
+      const source = await createSamplePdf(3);
+
+      const signed = await signPdf(source, SAMPLE_SIGNATURE_PNG, {
+        placement: { pageIndex: 1, xRatio: 0.5, yRatio: 0.25, widthRatio: 0.3 },
+      });
+      const pdf = await loadPdf(signed);
+
+      expect(pdf.getPageCount()).toBe(3);
+      expect(pdf.getPage(1).getSize()).toEqual({ width: 400, height: 400 });
+    });
+
+    it('stamps every page when placement.allPages is set', async () => {
+      const source = await createSamplePdf(4);
+
+      const signed = await signPdf(source, SAMPLE_SIGNATURE_PNG, {
+        placement: { pageIndex: 0, xRatio: 0.1, yRatio: 0.1, widthRatio: 0.2, allPages: true },
+      });
+      const pdf = await loadPdf(signed);
+
+      expect(pdf.getPageCount()).toBe(4);
+    });
+
+    it('falls back to the last page when placement.pageIndex is out of range', async () => {
+      const source = await createSamplePdf(2);
+
+      const signed = await signPdf(source, SAMPLE_SIGNATURE_PNG, {
+        placement: { pageIndex: 9, xRatio: 0.4, yRatio: 0.4, widthRatio: 0.25 },
+      });
+      const pdf = await loadPdf(signed);
+
+      expect(pdf.getPageCount()).toBe(2);
+    });
   });
 
   // ============ PAGE NUMBERS TESTS ============

@@ -66,7 +66,7 @@ box, encryption, signature placement, etc.):
 | `compressPdf` | 4 | Metadata stripped, content/page count unchanged |
 | `getPdfInfo` | 5 | Page count, size formatting, metadata extraction |
 | `watermarkPdf` | 7 | Custom text/color/opacity/font size on every page |
-| `signPdf` | 5 | Signature image stamped at the requested anchor/target page(s) |
+| `signPdf` | 9 | Signature image stamped by anchor/target page(s), or at an exact interactive `placement` (per-page ratio, `allPages`, out-of-range page clamps to last) |
 | `addPageNumbers` | 5 | "current / total" numbering, page count preserved |
 | `protectPdf` | 3 | Real encryption — rejects no/wrong password, opens with the right one |
 | `unlockPdf` | 2 | Real decryption given the correct password; rejects a wrong one |
