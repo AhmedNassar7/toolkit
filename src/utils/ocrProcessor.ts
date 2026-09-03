@@ -3,8 +3,26 @@ import { createWorker } from 'tesseract.js';
 
 /** Self-hosted Tesseract assets (see public/tesseract/, vendored at ~11 MB). */
 const TESS_BASE = `${import.meta.env.BASE_URL}tesseract/`;
+/** Only English is vendored; other languages download their data on demand. */
+const TESSDATA_CDN = 'https://tessdata.projectnaptha.com/4.0.0_fast';
 const MAX_PAGES = 50;
 const RENDER_SCALE = 2;
+
+/** Tesseract language codes offered by the OCR tool. `eng` runs fully offline. */
+export const OCR_LANGUAGES: { code: string; label: string }[] = [
+  { code: 'eng', label: 'English' },
+  { code: 'fra', label: 'French' },
+  { code: 'deu', label: 'German' },
+  { code: 'spa', label: 'Spanish' },
+  { code: 'ita', label: 'Italian' },
+  { code: 'por', label: 'Portuguese' },
+  { code: 'nld', label: 'Dutch' },
+  { code: 'rus', label: 'Russian' },
+  { code: 'ara', label: 'Arabic' },
+  { code: 'chi_sim', label: 'Chinese (Simplified)' },
+  { code: 'jpn', label: 'Japanese' },
+  { code: 'hin', label: 'Hindi' },
+];
 
 export interface OcrResult {
   /** Searchable PDF: the rasterised page image with an invisible text layer. */
@@ -56,15 +74,22 @@ async function imageToCanvas(file: File | Blob): Promise<HTMLCanvasElement> {
 /**
  * Run OCR on a scanned PDF or an image entirely in the browser (Tesseract via
  * WebAssembly), returning both a searchable PDF and the extracted plain text.
+ * `lang` defaults to English, which is fully offline; any other language's data
+ * is fetched from the Tesseract CDN the first time it is used.
  */
-export async function ocrDocument(file: File): Promise<OcrResult> {
-  const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
+export async function ocrDocument(
+  file: File | Blob,
+  options?: { lang?: string }
+): Promise<OcrResult> {
+  const lang = options?.lang || 'eng';
+  const name = file instanceof File ? file.name : '';
+  const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(name);
   const canvases = isPdf ? await pdfToCanvases(file) : [await imageToCanvas(file)];
 
-  const worker = await createWorker('eng', undefined, {
+  const worker = await createWorker(lang, undefined, {
     workerPath: `${TESS_BASE}worker.min.js`,
     corePath: `${TESS_BASE}tesseract-core-simd.wasm.js`,
-    langPath: TESS_BASE,
+    langPath: lang === 'eng' ? TESS_BASE : TESSDATA_CDN,
   });
 
   const pagePdfBytes: Uint8Array[] = [];

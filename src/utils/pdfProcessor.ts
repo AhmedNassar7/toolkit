@@ -573,21 +573,171 @@ const SCAN_PAGE_DIMENSIONS: Record<Exclude<ScanPageSize, 'fit'>, { width: number
   letter: { width: 612, height: 792 },
 };
 
+/** Small grayscale copy of a canvas for cheap geometry analysis. */
+function toAnalysisGray(src: HTMLCanvasElement, maxW = 400): { gray: Float32Array; w: number; h: number } {
+  const scale = Math.min(1, maxW / src.width);
+  const w = Math.max(1, Math.round(src.width * scale));
+  const h = Math.max(1, Math.round(src.height * scale));
+  const c = document.createElement('canvas');
+  c.width = w;
+  c.height = h;
+  const ctx = c.getContext('2d')!;
+  ctx.drawImage(src, 0, 0, w, h);
+  const { data } = ctx.getImageData(0, 0, w, h);
+  const gray = new Float32Array(w * h);
+  for (let i = 0; i < w * h; i++) {
+    gray[i] = data[i * 4] * 0.299 + data[i * 4 + 1] * 0.587 + data[i * 4 + 2] * 0.114;
+  }
+  return { gray, w, h };
+}
+
+/**
+ * Estimate page skew (degrees, positive = rotate clockwise to correct) by finding
+ * the rotation that packs "ink" pixels into the fewest horizontal rows — the classic
+ * projection-profile deskew. Searches a narrow ±8° range on a downscaled image.
+ */
+function estimateSkew(gray: Float32Array, w: number, h: number): number {
+  let mean = 0;
+  for (let i = 0; i < gray.length; i++) mean += gray[i];
+  mean /= gray.length;
+  const threshold = mean * 0.88;
+
+  const inkX: number[] = [];
+  const inkY: number[] = [];
+  for (let y = 0; y < h; y += 2) {
+    for (let x = 0; x < w; x += 2) {
+      if (gray[y * w + x] < threshold) {
+        inkX.push(x - w / 2);
+        inkY.push(y - h / 2);
+      }
+    }
+  }
+  if (inkX.length < 50) return 0;
+
+  let bestAngle = 0;
+  let bestScore = -1;
+  for (let deg = -8; deg <= 8; deg += 0.4) {
+    const rad = (deg * Math.PI) / 180;
+    const sin = Math.sin(rad);
+    const cos = Math.cos(rad);
+    const rows = new Float32Array(h + 2);
+    for (let i = 0; i < inkX.length; i++) {
+      const ry = inkX[i] * sin + inkY[i] * cos + h / 2;
+      const r = ry | 0;
+      if (r >= 0 && r < h) rows[r]++;
+    }
+    let score = 0;
+    for (let r = 0; r < h; r++) score += rows[r] * rows[r];
+    if (score > bestScore) {
+      bestScore = score;
+      bestAngle = deg;
+    }
+  }
+  return Math.abs(bestAngle) < 0.5 ? 0 : bestAngle;
+}
+
+/** Rotate a canvas by `deg` (clockwise), fitting the result and filling white. */
+function rotateCanvas(src: HTMLCanvasElement, deg: number): HTMLCanvasElement {
+  const rad = (deg * Math.PI) / 180;
+  const sin = Math.abs(Math.sin(rad));
+  const cos = Math.abs(Math.cos(rad));
+  const out = document.createElement('canvas');
+  out.width = Math.ceil(src.width * cos + src.height * sin);
+  out.height = Math.ceil(src.width * sin + src.height * cos);
+  const ctx = out.getContext('2d')!;
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, out.width, out.height);
+  ctx.translate(out.width / 2, out.height / 2);
+  ctx.rotate(rad);
+  ctx.drawImage(src, -src.width / 2, -src.height / 2);
+  return out;
+}
+
+/** Bounding box of non-white content, computed on a downscaled copy then scaled up. */
+function contentBox(src: HTMLCanvasElement): { x: number; y: number; w: number; h: number } {
+  const { gray, w, h } = toAnalysisGray(src, 500);
+  const colHit = new Uint32Array(w);
+  const rowHit = new Uint32Array(h);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      if (gray[y * w + x] < 238) {
+        colHit[x]++;
+        rowHit[y]++;
+      }
+    }
+  }
+  const minRun = Math.max(2, Math.round(w * 0.01));
+  const minColRun = Math.max(2, Math.round(h * 0.01));
+  let x0 = 0;
+  while (x0 < w && colHit[x0] < minRun) x0++;
+  let x1 = w - 1;
+  while (x1 > x0 && colHit[x1] < minRun) x1--;
+  let y0 = 0;
+  while (y0 < h && rowHit[y0] < minColRun) y0++;
+  let y1 = h - 1;
+  while (y1 > y0 && rowHit[y1] < minColRun) y1--;
+
+  if (x1 <= x0 || y1 <= y0) return { x: 0, y: 0, w: src.width, h: src.height };
+
+  const sx = src.width / w;
+  const sy = src.height / h;
+  const pad = 0.012;
+  const bx = Math.max(0, (x0 - w * pad) * sx);
+  const by = Math.max(0, (y0 - h * pad) * sy);
+  const bw = Math.min(src.width - bx, (x1 - x0 + 1 + w * pad * 2) * sx);
+  const bh = Math.min(src.height - by, (y1 - y0 + 1 + h * pad * 2) * sy);
+  return { x: bx, y: by, w: bw, h: bh };
+}
+
+/** Straighten a captured page and crop it to the document content. */
+function autoEnhanceCanvas(src: HTMLCanvasElement): HTMLCanvasElement {
+  const { gray, w, h } = toAnalysisGray(src, 400);
+  const skew = estimateSkew(gray, w, h);
+  const straight = skew !== 0 ? rotateCanvas(src, -skew) : src;
+
+  const box = contentBox(straight);
+  // Ignore a "crop" that barely changes anything or would trim almost everything.
+  const area = (box.w * box.h) / (straight.width * straight.height);
+  if (area > 0.98 || area < 0.15) return straight;
+
+  const out = document.createElement('canvas');
+  out.width = Math.round(box.w);
+  out.height = Math.round(box.h);
+  const ctx = out.getContext('2d')!;
+  ctx.drawImage(straight, box.x, box.y, box.w, box.h, 0, 0, out.width, out.height);
+  return out;
+}
+
 /** Re-encode one captured photo as a JPEG, optionally as a cleaned-up document scan. */
-async function normalizeScanImage(source: Blob, filter: ScanFilter): Promise<{ bytes: ArrayBuffer; width: number; height: number }> {
+async function normalizeScanImage(
+  source: Blob,
+  filter: ScanFilter,
+  enhance: boolean
+): Promise<{ bytes: ArrayBuffer; width: number; height: number }> {
   const bitmap = await createImageBitmap(source);
-  const canvas = document.createElement('canvas');
+  let canvas = document.createElement('canvas');
   canvas.width = bitmap.width;
   canvas.height = bitmap.height;
-  const ctx = canvas.getContext('2d');
+  let ctx = canvas.getContext('2d');
   if (!ctx) throw new Error('Could not process the captured image.');
+  ctx.drawImage(bitmap, 0, 0);
+  bitmap.close();
+
+  if (enhance) {
+    canvas = autoEnhanceCanvas(canvas);
+    ctx = canvas.getContext('2d')!;
+  }
 
   if (filter === 'grayscale' || filter === 'bw') {
-    ctx.filter = 'grayscale(1) contrast(1.15) brightness(1.05)';
+    const tmp = document.createElement('canvas');
+    tmp.width = canvas.width;
+    tmp.height = canvas.height;
+    const tctx = tmp.getContext('2d')!;
+    tctx.filter = 'grayscale(1) contrast(1.15) brightness(1.05)';
+    tctx.drawImage(canvas, 0, 0);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(tmp, 0, 0);
   }
-  ctx.drawImage(bitmap, 0, 0);
-  ctx.filter = 'none';
-  bitmap.close();
 
   if (filter === 'bw') {
     const image = ctx.getImageData(0, 0, canvas.width, canvas.height);
@@ -615,10 +765,11 @@ async function normalizeScanImage(source: Blob, filter: ScanFilter): Promise<{ b
  * Build a PDF from photos captured with the device camera (or picked from disk).
  * `pageSize: 'fit'` makes each page match its photo; 'a4'/'letter' place the photo
  * centred on a fixed page, switching to landscape when the photo is wider than tall.
+ * `autoEnhance` straightens each page and crops it to the document before embedding.
  */
 export async function scanToPdf(
   images: Blob[],
-  options?: { pageSize?: ScanPageSize; filter?: ScanFilter }
+  options?: { pageSize?: ScanPageSize; filter?: ScanFilter; autoEnhance?: boolean }
 ): Promise<Blob> {
   if (images.length === 0) {
     throw new Error('Capture or add at least one page before creating a PDF.');
@@ -626,11 +777,16 @@ export async function scanToPdf(
 
   const pageSize = options?.pageSize ?? 'fit';
   const filter = options?.filter ?? 'none';
+  const autoEnhance = options?.autoEnhance ?? true;
   const margin = 24;
   const pdfDoc = await PDFDocument.create();
 
   for (const source of images) {
-    const { bytes, width: imgWidth, height: imgHeight } = await normalizeScanImage(source, filter);
+    const { bytes, width: imgWidth, height: imgHeight } = await normalizeScanImage(
+      source,
+      filter,
+      autoEnhance
+    );
     const image = await pdfDoc.embedJpg(bytes);
 
     if (pageSize === 'fit') {

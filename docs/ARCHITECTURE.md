@@ -112,9 +112,19 @@ steps if you're adding one.
   `tesseract.js`, but its worker, WASM core, and `eng.traineddata.gz` are
   committed under `public/tesseract/` (~11 MB) rather than pulled from
   tesseract.js's default CDN — `workerPath`/`corePath`/`langPath` point at
-  `${import.meta.env.BASE_URL}tesseract/`. They're only requested the first
-  time someone runs the tool. Adding a language means vendoring its
-  `<lang>.traineddata.gz` alongside.
+  `${import.meta.env.BASE_URL}tesseract/`. English therefore works fully
+  offline. Only when the user explicitly picks another language does
+  `langPath` switch to the Tesseract CDN to download that language's data.
+- **Scan to PDF's auto-enhance is crop + deskew, not perspective de-warp.**
+  `pdfProcessor.ts` estimates page skew with a projection-profile search
+  (±8°) on a downscaled grayscale copy, rotates to correct it, then crops to
+  the content bounding box. It deliberately backs off if the crop would
+  barely change the frame or would trim almost everything. Full
+  corner-based perspective correction is a possible follow-up.
+- **The four signature "Type"-mode fonts are self-hosted.** Great Vibes,
+  Dancing Script, Sacramento, and Pacifico (OFL) live in `public/fonts/` as
+  latin-subset `woff2` and are declared with `@font-face` in `index.css`;
+  only Inter still loads from Google Fonts.
 - **`tools.ts`'s `category` field is the actual grouping used on the
   homepage and in the header nav** — e.g. QR Code is categorized `convert`
   in the data, so it appears under "Convert PDF" in the UI even though it's

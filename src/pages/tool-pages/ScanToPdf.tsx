@@ -16,6 +16,7 @@ import { getToolById } from '../../data/tools';
 import { useGoBack } from '../../hooks/useGoBack';
 import ProgressBar from '../../components/ProgressBar';
 import { scanToPdf, type ScanFilter, type ScanPageSize } from '../../utils/pdfProcessor';
+import { ocrDocument, OCR_LANGUAGES } from '../../utils/ocrProcessor';
 
 type Step = 'capture' | 'processing' | 'done';
 
@@ -23,6 +24,11 @@ interface Shot {
   id: string;
   url: string;
   blob: Blob;
+}
+
+interface OutFile {
+  blob: Blob;
+  name: string;
 }
 
 const pageSizes: { value: ScanPageSize; label: string }[] = [
@@ -53,8 +59,11 @@ export default function ScanToPdf() {
   const [shots, setShots] = useState<Shot[]>([]);
   const [pageSize, setPageSize] = useState<ScanPageSize>('fit');
   const [filter, setFilter] = useState<ScanFilter>('none');
+  const [autoEnhance, setAutoEnhance] = useState(true);
+  const [runOcr, setRunOcr] = useState(false);
+  const [ocrLang, setOcrLang] = useState('eng');
   const [progress, setProgress] = useState(0);
-  const [result, setResult] = useState<{ blob: Blob; name: string } | null>(null);
+  const [result, setResult] = useState<OutFile[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -157,34 +166,45 @@ export default function ScanToPdf() {
   const createPdf = useCallback(async () => {
     if (shots.length === 0) return;
     setStep('processing');
-    setProgress(15);
+    setProgress(runOcr ? 8 : 15);
     setError(null);
     try {
-      const tick = setInterval(() => setProgress((p) => Math.min(p + 12, 85)), 300);
-      const blob = await scanToPdf(
+      const tick = setInterval(() => setProgress((p) => Math.min(p + (runOcr ? 5 : 12), 85)), 400);
+      const scan = await scanToPdf(
         shots.map((s) => s.blob),
-        { pageSize, filter }
+        { pageSize, filter, autoEnhance }
       );
+
+      let outputs: OutFile[];
+      if (runOcr) {
+        const { pdf, text } = await ocrDocument(scan, { lang: ocrLang });
+        outputs = [
+          { blob: pdf, name: 'scan_ocr.pdf' },
+          { blob: new Blob([text], { type: 'text/plain;charset=utf-8' }), name: 'scan.txt' },
+        ];
+      } else {
+        outputs = [{ blob: scan, name: 'scan.pdf' }];
+      }
+
       clearInterval(tick);
       setProgress(100);
-      setResult({ blob, name: 'scan.pdf' });
+      setResult(outputs);
       setStep('done');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not create the PDF.');
       setStep('capture');
       setProgress(0);
     }
-  }, [shots, pageSize, filter]);
+  }, [shots, pageSize, filter, autoEnhance, runOcr, ocrLang]);
 
-  const download = useCallback(() => {
-    if (!result) return;
-    const url = URL.createObjectURL(result.blob);
+  const download = useCallback((file: OutFile) => {
+    const url = URL.createObjectURL(file.blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = result.name;
+    a.download = file.name;
     a.click();
     URL.revokeObjectURL(url);
-  }, [result]);
+  }, []);
 
   const reset = useCallback(() => {
     shots.forEach((s) => URL.revokeObjectURL(s.url));
@@ -370,6 +390,47 @@ export default function ScanToPdf() {
                   ))}
                 </div>
               </div>
+
+              <label className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
+                <input
+                  type="checkbox"
+                  checked={autoEnhance}
+                  onChange={(e) => setAutoEnhance(e.target.checked)}
+                  className="accent-red-500"
+                />
+                Auto-enhance — straighten &amp; crop each page to the document
+              </label>
+
+              <label className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
+                <input
+                  type="checkbox"
+                  checked={runOcr}
+                  onChange={(e) => setRunOcr(e.target.checked)}
+                  className="accent-red-500"
+                />
+                Make searchable — run OCR and also export the text
+              </label>
+
+              {runOcr && (
+                <div className="pl-6 space-y-1">
+                  <select
+                    value={ocrLang}
+                    onChange={(e) => setOcrLang(e.target.value)}
+                    className="w-full px-4 py-2.5 border border-gray-200 dark:border-gray-700 rounded-xl text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-red-500/30 focus:border-red-500 transition-colors"
+                  >
+                    {OCR_LANGUAGES.map((l) => (
+                      <option key={l.code} value={l.code}>
+                        {l.label}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-xs text-gray-400 dark:text-gray-500">
+                    OCR adds time (a few seconds per page).
+                    {ocrLang !== 'eng' &&
+                      ' Non-English languages download their data on first use.'}
+                  </p>
+                </div>
+              )}
             </div>
 
             {shots.length > 0 && (
@@ -393,10 +454,11 @@ export default function ScanToPdf() {
               <RefreshCw className="w-8 h-8 animate-spin" style={{ color: tool.color }} />
             </div>
             <h3 className="text-lg font-semibold text-gray-800 dark:text-gray-100 mb-2">
-              Building your PDF…
+              {runOcr ? 'Building & reading your PDF…' : 'Building your PDF…'}
             </h3>
             <p className="text-sm text-gray-500 dark:text-gray-400 mb-6">
               Processing {shots.length} page{shots.length === 1 ? '' : 's'} in your browser
+              {runOcr ? ' — OCR can take a few seconds per page' : ''}
             </p>
             <ProgressBar progress={progress} color={tool.color} />
           </div>
@@ -425,22 +487,25 @@ export default function ScanToPdf() {
                   </p>
                 </div>
                 <div className="bg-gray-50 dark:bg-gray-800/50 rounded-xl p-3">
-                  <p className="text-xs text-gray-400 dark:text-gray-500">size</p>
+                  <p className="text-xs text-gray-400 dark:text-gray-500">searchable</p>
                   <p className="text-sm font-semibold text-gray-800 dark:text-gray-200">
-                    {(result.blob.size / 1024).toFixed(1)} KB
+                    {runOcr ? 'Yes' : 'No'}
                   </p>
                 </div>
               </div>
 
-              <div className="flex flex-col sm:flex-row gap-3 justify-center">
-                <button
-                  onClick={download}
-                  className="inline-flex items-center justify-center gap-2 px-6 py-3 rounded-xl text-white font-semibold transition-all hover:opacity-90"
-                  style={{ backgroundColor: tool.color }}
-                >
-                  <Download className="w-5 h-5" />
-                  Download {tool.outputLabel}
-                </button>
+              <div className="flex flex-col sm:flex-row flex-wrap gap-3 justify-center">
+                {result.map((file) => (
+                  <button
+                    key={file.name}
+                    onClick={() => download(file)}
+                    className="inline-flex items-center justify-center gap-2 px-6 py-3 rounded-xl text-white font-semibold transition-all hover:opacity-90"
+                    style={{ backgroundColor: tool.color }}
+                  >
+                    <Download className="w-5 h-5" />
+                    {file.name.endsWith('.txt') ? 'Download text' : 'Download PDF'}
+                  </button>
+                ))}
                 <button
                   onClick={reset}
                   className="inline-flex items-center justify-center gap-2 px-6 py-3 rounded-xl bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 font-semibold transition-all hover:bg-gray-200 dark:hover:bg-gray-700"
