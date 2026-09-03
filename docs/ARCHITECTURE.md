@@ -109,18 +109,23 @@ steps if you're adding one.
   `${import.meta.env.BASE_URL}pdf.worker.min.mjs`, so it resolves correctly
   under the `/toolkit/` GitHub Pages base path in production.
 - **OCR runs client-side with vendored assets.** `ocrProcessor.ts` uses
-  `tesseract.js`, but its worker, WASM core, and `eng.traineddata.gz` are
-  committed under `public/tesseract/` (~11 MB) rather than pulled from
-  tesseract.js's default CDN — `workerPath`/`corePath`/`langPath` point at
-  `${import.meta.env.BASE_URL}tesseract/`. English therefore works fully
-  offline. Only when the user explicitly picks another language does
-  `langPath` switch to the Tesseract CDN to download that language's data.
-- **Scan to PDF's auto-enhance is crop + deskew, not perspective de-warp.**
-  `pdfProcessor.ts` estimates page skew with a projection-profile search
-  (±8°) on a downscaled grayscale copy, rotates to correct it, then crops to
-  the content bounding box. It deliberately backs off if the crop would
-  barely change the frame or would trim almost everything. Full
-  corner-based perspective correction is a possible follow-up.
+  `tesseract.js`, but its worker, WASM core, and the `eng`/`fra`/`deu`/`spa`
+  `traineddata.gz` files are committed under `public/tesseract/` (~14 MB)
+  rather than pulled from tesseract.js's default CDN — `workerPath`/
+  `corePath`/`langPath` point at `${import.meta.env.BASE_URL}tesseract/`.
+  Those four languages work fully offline; picking any other language
+  (`OFFLINE_LANGS` in `ocrProcessor.ts`) switches `langPath` to the
+  Tesseract CDN to download that language's data on first use. OCR reports
+  real per-page progress through the optional third `processor` argument
+  that `ToolPage` now threads to the progress bar.
+- **Scan to PDF's auto-enhance: perspective de-warp, then deskew + crop.**
+  `pdfProcessor.ts` Otsu-thresholds a downscaled page, flood-fills the blob
+  under the image centre, and takes its extreme points as a document quad
+  (`documentQuad`). If that quad is confident (not the whole frame, not a
+  speck) it's mesh-warped onto a flat rectangle (`warpQuadToRect`, 24×24
+  triangle grid with an affine transform per triangle). Otherwise it falls
+  back to a projection-profile skew search (±8°, `estimateSkew`) plus a
+  content-box crop. The pure pieces are exported and unit-tested.
 - **The four signature "Type"-mode fonts are self-hosted.** Great Vibes,
   Dancing Script, Sacramento, and Pacifico (OFL) live in `public/fonts/` as
   latin-subset `woff2` and are declared with `@font-face` in `index.css`;

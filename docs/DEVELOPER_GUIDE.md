@@ -12,7 +12,7 @@
 | Styling | Tailwind CSS 3.4 |
 | PDF engine | [`pdf-lib-with-encrypt`](https://www.npmjs.com/package/pdf-lib-with-encrypt) (a `pdf-lib` fork adding real password encryption) + [`pdfjs-dist`](https://www.npmjs.com/package/pdfjs-dist) |
 | Office generation | `docx`, `pptxgenjs`, `exceljs` — build `.docx`/`.pptx`/`.xlsx` entirely client-side |
-| OCR | `tesseract.js` (WASM) — worker/core/`eng.traineddata.gz` vendored in `public/tesseract/`; English is offline, other languages fetch their data from the Tesseract CDN on demand |
+| OCR | `tesseract.js` (WASM) — worker/core + `eng`/`fra`/`deu`/`spa` `traineddata.gz` vendored in `public/tesseract/` (offline); other languages fetch their data from the Tesseract CDN on demand |
 | Misc | `jszip` (multi-file ZIP downloads), `file-saver`, `qrcode` + `jsqr` (QR generate/scan), `lucide-react` (icons) |
 | Type checking | TypeScript (`tsc --noEmit -p tsconfig.app.json`) — `strict`, `noUnusedLocals`, `noUnusedParameters` all on |
 | Linting | ESLint 9 flat config ([`eslint.config.js`](../eslint.config.js)) — `@eslint/js` recommended + `typescript-eslint` recommended + `react-hooks`/`react-refresh` plugins |
@@ -50,11 +50,13 @@ client-side out of the box. The only optional variable is
 
 ## Testing
 
-61 tests across two files, all run with `npm test` (Vitest, Node environment
-— not a browser/jsdom environment).
+~86 tests across three files, all run with `npm test` (Vitest, Node environment
+— not a browser/jsdom environment). Canvas/WASM-bound code (`redactPdf`,
+`editPdf`, `scanToPdf`, `ocrProcessor`) can't run whole in Node, so its
+pure geometry/threshold helpers are exported and tested directly instead.
 
-**`tests/pdfProcessor.test.ts`** (58 tests) exercises every exported function
-in [`src/utils/pdfProcessor.ts`](../src/utils/pdfProcessor.ts) against real,
+**`tests/pdfProcessor.test.ts`** exercises the PDF-structure functions in
+[`src/utils/pdfProcessor.ts`](../src/utils/pdfProcessor.ts) against real,
 generated PDFs — no mocks. Each test loads the actual output back with
 `pdf-lib` and asserts on real structure (page count, rotation angle, crop
 box, encryption, signature placement, etc.):
@@ -75,6 +77,12 @@ box, encryption, signature placement, etc.):
 | `repairPdf` | 2 | Lenient reparse + resave preserves page count |
 | `organizePdf` | 3 | Reorders/drops pages, supports a single-page result |
 | `integration scenarios` | 5 | Chained ops (merge→split, watermark→compress, etc.) |
+
+**`tests/scanProcessor.test.ts`** (15 tests) covers the pure helpers behind
+Scan to PDF: `scanPageLayout` (fit / A4 / Letter placement + landscape
+flip), `estimateSkew` (projection-profile deskew recovers a known tilt with
+the correcting sign), and the perspective-correction math — `otsuThreshold`,
+`documentQuad` (corner detection + confidence rejection), `warpTargetSize`.
 
 **`tests/qrCode.test.ts`** (3 tests) covers the pure validation logic behind
 the QR tool (URL-vs-text detection, non-empty input, accepted image MIME

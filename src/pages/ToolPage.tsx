@@ -9,7 +9,11 @@ import { ArrowLeft, Download, RefreshCw, CheckCircle, AlertCircle, Sparkles } fr
 type Step = 'upload' | 'processing' | 'done';
 
 interface ToolPageProps {
-  processor: (files: File[], options?: Record<string, unknown>) => Promise<ProcessResult>;
+  processor: (
+    files: File[],
+    options?: Record<string, unknown>,
+    onProgress?: (percent: number) => void
+  ) => Promise<ProcessResult>;
   optionsComponent?: React.ComponentType<{
     options: Record<string, unknown>;
     setOptions: React.Dispatch<React.SetStateAction<Record<string, unknown>>>;
@@ -51,11 +55,18 @@ export default function ToolPage({ processor, optionsComponent: OptionsComponent
     setError(null);
 
     try {
+      // Simulated progress, unless the processor reports real progress — then the
+      // simulation steps aside (older tools that take no callback keep the sim).
+      let realProgress = false;
       const interval = setInterval(() => {
+        if (realProgress) return;
         setProgress((p) => Math.min(p + 15, 85));
       }, 300);
 
-      const res = await processor(files, options);
+      const res = await processor(files, options, (percent) => {
+        realProgress = true;
+        setProgress(Math.max(12, Math.min(99, Math.round(percent))));
+      });
       clearInterval(interval);
       setProgress(100);
       setResult(res);

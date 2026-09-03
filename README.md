@@ -24,10 +24,10 @@ self-hosted LibreOffice service for higher-fidelity Office↔PDF conversion.
 - **Organize & optimize** — merge, split, rotate, reorder, crop, compress, and repair PDFs
 - **Convert** — PDF ⇄ Word/PowerPoint/Excel/PNG/JPG/SVG, HTML → PDF, JPG → PDF
 - **Edit & secure** — watermark, page numbers, sign (type your name, draw, or upload a signature, optionally date it, then drag/resize it on the page), password-protect/unlock with real encryption
-- **Capture** — scan pages with your device camera, auto-straighten & crop them, reorder, and export a multi-page PDF (optionally OCR'd in the same pass)
-- **OCR** — extract text from a scanned PDF or photo (Tesseract, in-browser); get a searchable PDF plus a `.txt`. English is fully offline; other languages fetch their data on demand
+- **Capture** — scan pages with your device camera; perspective-corrects and crops each page (falls back to straighten + crop), reorder, and export a multi-page PDF, optionally OCR'd in the same pass
+- **OCR** — extract text from a scanned PDF or photo (Tesseract, in-browser); get a searchable PDF plus a `.txt`, with a real progress bar. English, French, German and Spanish are fully offline; other languages fetch their data on demand
 - **QR codes** — scan or generate
-- **Privacy by default** — no upload, no account, no ads; files never leave your device. Fonts and the OCR engine are self-hosted; the only outbound requests are the opt-in server path below and (if you pick one) a non-English OCR language pack
+- **Privacy by default** — no upload, no account, no ads; files never leave your device. Fonts and the OCR engine (+ 4 languages) are self-hosted; the only outbound requests are the opt-in server path below and, if you pick one, an extra OCR language pack
 
 ## Quick start
 

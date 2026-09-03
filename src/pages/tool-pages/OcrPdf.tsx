@@ -20,23 +20,28 @@ function OcrOptions({
         {OCR_LANGUAGES.map((l) => (
           <option key={l.code} value={l.code}>
             {l.label}
+            {l.offline ? '' : ' — downloads on first use'}
           </option>
         ))}
       </select>
-      {lang !== 'eng' && (
+      {!OCR_LANGUAGES.find((l) => l.code === lang)?.offline && (
         <p className="text-xs text-gray-400 dark:text-gray-500">
-          English runs fully offline. Other languages download their recognition data
-          (~1–15 MB) from the Tesseract project the first time you use them.
+          English, French, German and Spanish run fully offline. This language downloads
+          its recognition data (~1–15 MB) from the Tesseract project the first time you use it.
         </p>
       )}
     </div>
   );
 }
 
-async function processor(files: File[], options?: Record<string, unknown>): Promise<ProcessResult> {
+async function processor(
+  files: File[],
+  options?: Record<string, unknown>,
+  onProgress?: (percent: number) => void
+): Promise<ProcessResult> {
   const file = files[0];
   const lang = (options?.lang as string) ?? 'eng';
-  const { pdf, text, pages, words } = await ocrDocument(file, { lang });
+  const { pdf, text, pages, words } = await ocrDocument(file, { lang, onProgress });
   const base = file.name.replace(/\.[^.]+$/, '') || 'document';
   const langLabel = OCR_LANGUAGES.find((l) => l.code === lang)?.label ?? lang;
 

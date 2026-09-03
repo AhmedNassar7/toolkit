@@ -1,27 +1,32 @@
 import { PDFDocument } from 'pdf-lib-with-encrypt';
 import { createWorker } from 'tesseract.js';
 
-/** Self-hosted Tesseract assets (see public/tesseract/, vendored at ~11 MB). */
+/** Self-hosted Tesseract assets (see public/tesseract/). */
 const TESS_BASE = `${import.meta.env.BASE_URL}tesseract/`;
-/** Only English is vendored; other languages download their data on demand. */
+/** Languages with their data vendored in public/tesseract/ — these run offline. */
+const OFFLINE_LANGS = new Set(['eng', 'fra', 'deu', 'spa']);
+/** Everything else downloads its data on first use. */
 const TESSDATA_CDN = 'https://tessdata.projectnaptha.com/4.0.0_fast';
 const MAX_PAGES = 50;
 const RENDER_SCALE = 2;
 
-/** Tesseract language codes offered by the OCR tool. `eng` runs fully offline. */
-export const OCR_LANGUAGES: { code: string; label: string }[] = [
-  { code: 'eng', label: 'English' },
-  { code: 'fra', label: 'French' },
-  { code: 'deu', label: 'German' },
-  { code: 'spa', label: 'Spanish' },
-  { code: 'ita', label: 'Italian' },
-  { code: 'por', label: 'Portuguese' },
-  { code: 'nld', label: 'Dutch' },
-  { code: 'rus', label: 'Russian' },
-  { code: 'ara', label: 'Arabic' },
-  { code: 'chi_sim', label: 'Chinese (Simplified)' },
-  { code: 'jpn', label: 'Japanese' },
-  { code: 'hin', label: 'Hindi' },
+/**
+ * Tesseract language codes offered by the OCR tool. The first four are vendored
+ * and run fully offline; the rest download their recognition data on first use.
+ */
+export const OCR_LANGUAGES: { code: string; label: string; offline: boolean }[] = [
+  { code: 'eng', label: 'English', offline: true },
+  { code: 'fra', label: 'French', offline: true },
+  { code: 'deu', label: 'German', offline: true },
+  { code: 'spa', label: 'Spanish', offline: true },
+  { code: 'ita', label: 'Italian', offline: false },
+  { code: 'por', label: 'Portuguese', offline: false },
+  { code: 'nld', label: 'Dutch', offline: false },
+  { code: 'rus', label: 'Russian', offline: false },
+  { code: 'ara', label: 'Arabic', offline: false },
+  { code: 'chi_sim', label: 'Chinese (Simplified)', offline: false },
+  { code: 'jpn', label: 'Japanese', offline: false },
+  { code: 'hin', label: 'Hindi', offline: false },
 ];
 
 export interface OcrResult {
@@ -79,17 +84,30 @@ async function imageToCanvas(file: File | Blob): Promise<HTMLCanvasElement> {
  */
 export async function ocrDocument(
   file: File | Blob,
-  options?: { lang?: string }
+  options?: { lang?: string; onProgress?: (percent: number) => void }
 ): Promise<OcrResult> {
   const lang = options?.lang || 'eng';
+  const report = options?.onProgress ?? (() => {});
   const name = file instanceof File ? file.name : '';
   const isPdf = file.type === 'application/pdf' || /\.pdf$/i.test(name);
+
+  report(4);
   const canvases = isPdf ? await pdfToCanvases(file) : [await imageToCanvas(file)];
+
+  // Rendering ends ~12%, OCR runs 12→92% across pages, merge finishes to 100%.
+  const OCR_START = 12;
+  const OCR_SPAN = 80;
+  let pageIndex = 0;
 
   const worker = await createWorker(lang, undefined, {
     workerPath: `${TESS_BASE}worker.min.js`,
     corePath: `${TESS_BASE}tesseract-core-simd.wasm.js`,
-    langPath: lang === 'eng' ? TESS_BASE : TESSDATA_CDN,
+    langPath: OFFLINE_LANGS.has(lang) ? TESS_BASE : TESSDATA_CDN,
+    logger: (m) => {
+      if (m.status === 'recognizing text') {
+        report(OCR_START + ((pageIndex + m.progress) / canvases.length) * OCR_SPAN);
+      }
+    },
   });
 
   const pagePdfBytes: Uint8Array[] = [];
@@ -106,6 +124,8 @@ export async function ocrDocument(
       // Release the (large) render canvas before moving to the next page.
       canvas.width = 0;
       canvas.height = 0;
+      pageIndex += 1;
+      report(OCR_START + (pageIndex / canvases.length) * OCR_SPAN);
     }
   } finally {
     await worker.terminate();
@@ -115,6 +135,7 @@ export async function ocrDocument(
     throw new Error('OCR produced no output for this file.');
   }
 
+  report(94);
   const merged = await PDFDocument.create();
   for (const bytes of pagePdfBytes) {
     const src = await PDFDocument.load(bytes);
@@ -122,6 +143,7 @@ export async function ocrDocument(
     copied.forEach((p) => merged.addPage(p));
   }
   const mergedBytes = await merged.save();
+  report(100);
 
   return {
     pdf: new Blob([new Uint8Array(mergedBytes)], { type: 'application/pdf' }),

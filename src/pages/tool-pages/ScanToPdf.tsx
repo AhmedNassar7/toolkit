@@ -169,7 +169,10 @@ export default function ScanToPdf() {
     setProgress(runOcr ? 8 : 15);
     setError(null);
     try {
-      const tick = setInterval(() => setProgress((p) => Math.min(p + (runOcr ? 5 : 12), 85)), 400);
+      let building = true;
+      const tick = setInterval(() => {
+        if (building) setProgress((p) => Math.min(p + 8, runOcr ? 14 : 85));
+      }, 400);
       const scan = await scanToPdf(
         shots.map((s) => s.blob),
         { pageSize, filter, autoEnhance }
@@ -177,7 +180,12 @@ export default function ScanToPdf() {
 
       let outputs: OutFile[];
       if (runOcr) {
-        const { pdf, text } = await ocrDocument(scan, { lang: ocrLang });
+        building = false;
+        const { pdf, text } = await ocrDocument(scan, {
+          lang: ocrLang,
+          // OCR reports 0–100; map it onto the remaining 15–100 of the bar.
+          onProgress: (p) => setProgress(Math.round(15 + (p / 100) * 85)),
+        });
         outputs = [
           { blob: pdf, name: 'scan_ocr.pdf' },
           { blob: new Blob([text], { type: 'text/plain;charset=utf-8' }), name: 'scan.txt' },
@@ -186,6 +194,7 @@ export default function ScanToPdf() {
         outputs = [{ blob: scan, name: 'scan.pdf' }];
       }
 
+      building = false;
       clearInterval(tick);
       setProgress(100);
       setResult(outputs);
@@ -421,13 +430,14 @@ export default function ScanToPdf() {
                     {OCR_LANGUAGES.map((l) => (
                       <option key={l.code} value={l.code}>
                         {l.label}
+                        {l.offline ? '' : ' — downloads on first use'}
                       </option>
                     ))}
                   </select>
                   <p className="text-xs text-gray-400 dark:text-gray-500">
                     OCR adds time (a few seconds per page).
-                    {ocrLang !== 'eng' &&
-                      ' Non-English languages download their data on first use.'}
+                    {!OCR_LANGUAGES.find((l) => l.code === ocrLang)?.offline &&
+                      ' This language downloads its data on first use.'}
                   </p>
                 </div>
               )}

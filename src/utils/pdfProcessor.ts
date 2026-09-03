@@ -595,8 +595,10 @@ function toAnalysisGray(src: HTMLCanvasElement, maxW = 400): { gray: Float32Arra
  * Estimate page skew (degrees, positive = rotate clockwise to correct) by finding
  * the rotation that packs "ink" pixels into the fewest horizontal rows — the classic
  * projection-profile deskew. Searches a narrow ±8° range on a downscaled image.
+ *
+ * Exported for unit testing; `gray` is a row-major grayscale buffer (0–255).
  */
-function estimateSkew(gray: Float32Array, w: number, h: number): number {
+export function estimateSkew(gray: Float32Array, w: number, h: number): number {
   let mean = 0;
   for (let i = 0; i < gray.length; i++) mean += gray[i];
   mean /= gray.length;
@@ -689,14 +691,234 @@ function contentBox(src: HTMLCanvasElement): { x: number; y: number; w: number; 
   return { x: bx, y: by, w: bw, h: bh };
 }
 
-/** Straighten a captured page and crop it to the document content. */
+export interface Pt {
+  x: number;
+  y: number;
+}
+
+/** Otsu's method: the grayscale (0–255) level that best splits the histogram. */
+export function otsuThreshold(gray: Float32Array): number {
+  const hist = new Array(256).fill(0);
+  for (let i = 0; i < gray.length; i++) hist[Math.max(0, Math.min(255, gray[i] | 0))]++;
+  const total = gray.length;
+  let sum = 0;
+  for (let t = 0; t < 256; t++) sum += t * hist[t];
+  let sumB = 0;
+  let wB = 0;
+  let best = 0;
+  let bestVar = -1;
+  for (let t = 0; t < 256; t++) {
+    wB += hist[t];
+    if (wB === 0) continue;
+    const wF = total - wB;
+    if (wF === 0) break;
+    sumB += t * hist[t];
+    const mB = sumB / wB;
+    const mF = (sum - sumB) / wF;
+    const between = wB * wF * (mB - mF) * (mB - mF);
+    if (between > bestVar) {
+      bestVar = between;
+      best = t;
+    }
+  }
+  return best;
+}
+
+const dist = (a: Pt, b: Pt) => Math.hypot(a.x - b.x, a.y - b.y);
+const polyArea = (p: Pt[]) => {
+  let a = 0;
+  for (let i = 0; i < p.length; i++) {
+    const j = (i + 1) % p.length;
+    a += p[i].x * p[j].y - p[j].x * p[i].y;
+  }
+  return Math.abs(a) / 2;
+};
+
+/**
+ * Best-effort document corner detection: threshold the page, flood-fill the blob
+ * under the image centre, and take its extreme points as the quad. Returns the
+ * corners [tl, tr, br, bl] in the given (downscaled) coordinate space, or null
+ * when it isn't confident enough to be worth a perspective correction.
+ */
+export function documentQuad(gray: Float32Array, w: number, h: number): [Pt, Pt, Pt, Pt] | null {
+  const t = otsuThreshold(gray);
+  const centreIdx = ((h >> 1) * w + (w >> 1)) | 0;
+  const centreDark = gray[centreIdx] <= t;
+
+  const visited = new Uint8Array(w * h);
+  const stack = [centreIdx];
+  visited[centreIdx] = 1;
+  let count = 0;
+  let minSum = Infinity;
+  let maxSum = -Infinity;
+  let minDiff = Infinity;
+  let maxDiff = -Infinity;
+  let tl!: Pt;
+  let tr!: Pt;
+  let br!: Pt;
+  let bl!: Pt;
+
+  while (stack.length) {
+    const idx = stack.pop()!;
+    const x = idx % w;
+    const y = (idx / w) | 0;
+    count++;
+    const s = x + y;
+    const d = x - y;
+    if (s < minSum) {
+      minSum = s;
+      tl = { x, y };
+    }
+    if (s > maxSum) {
+      maxSum = s;
+      br = { x, y };
+    }
+    if (d > maxDiff) {
+      maxDiff = d;
+      tr = { x, y };
+    }
+    if (d < minDiff) {
+      minDiff = d;
+      bl = { x, y };
+    }
+    const nb = [idx - 1, idx + 1, idx - w, idx + w];
+    for (let k = 0; k < 4; k++) {
+      const n = nb[k];
+      if (n < 0 || n >= w * h || visited[n]) continue;
+      if (k === 0 && idx % w === 0) continue; // no left neighbour on column 0
+      if (k === 1 && n % w === 0) continue; // no right neighbour on the last column
+      visited[n] = 1;
+      if ((gray[n] <= t) === centreDark) stack.push(n);
+    }
+  }
+
+  const frac = count / (w * h);
+  if (frac < 0.12 || frac > 0.99) return null;
+
+  const quad: [Pt, Pt, Pt, Pt] = [tl, tr, br, bl];
+  const area = polyArea(quad);
+  if (area / (w * h) < 0.12 || area / (w * h) > 0.985) return null;
+  const minEdge = Math.min(dist(tl, tr), dist(tr, br), dist(br, bl), dist(bl, tl));
+  if (minEdge < 0.15 * Math.min(w, h)) return null;
+
+  // If every corner already sits in the image corner, there's nothing to correct.
+  const near = (p: Pt, cx: number, cy: number) => Math.hypot(p.x - cx, p.y - cy) < 0.03 * (w + h);
+  if (near(tl, 0, 0) && near(tr, w, 0) && near(br, w, h) && near(bl, 0, h)) return null;
+
+  return quad;
+}
+
+/** Target size for a de-warped quad: the average of its opposite side lengths. */
+export function warpTargetSize(quad: [Pt, Pt, Pt, Pt]): { width: number; height: number } {
+  const [tl, tr, br, bl] = quad;
+  return {
+    width: Math.round((dist(tl, tr) + dist(bl, br)) / 2),
+    height: Math.round((dist(tl, bl) + dist(tr, br)) / 2),
+  };
+}
+
+const lerp = (a: Pt, b: Pt, k: number): Pt => ({ x: a.x + (b.x - a.x) * k, y: a.y + (b.y - a.y) * k });
+
+function drawTriangle(
+  ctx: CanvasRenderingContext2D,
+  img: HTMLCanvasElement,
+  s: [Pt, Pt, Pt],
+  d: [Pt, Pt, Pt]
+) {
+  const [s0, s1, s2] = s;
+  const [d0, d1, d2] = d;
+  const denom = (s0.x - s2.x) * (s1.y - s2.y) - (s1.x - s2.x) * (s0.y - s2.y);
+  if (Math.abs(denom) < 1e-6) return;
+  const a = ((d0.x - d2.x) * (s1.y - s2.y) - (d1.x - d2.x) * (s0.y - s2.y)) / denom;
+  const b = ((s0.x - s2.x) * (d1.x - d2.x) - (s1.x - s2.x) * (d0.x - d2.x)) / denom;
+  const c = ((d0.y - d2.y) * (s1.y - s2.y) - (d1.y - d2.y) * (s0.y - s2.y)) / denom;
+  const e = ((s0.x - s2.x) * (d1.y - d2.y) - (s1.x - s2.x) * (d0.y - d2.y)) / denom;
+  const tx = d2.x - a * s2.x - b * s2.y;
+  const ty = d2.y - c * s2.x - e * s2.y;
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(d0.x, d0.y);
+  ctx.lineTo(d1.x, d1.y);
+  ctx.lineTo(d2.x, d2.y);
+  ctx.closePath();
+  ctx.clip();
+  ctx.setTransform(a, c, b, e, tx, ty);
+  ctx.drawImage(img, 0, 0);
+  ctx.restore();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+}
+
+/** Warp the source quad onto a flat `outW`×`outH` rectangle via a triangle mesh. */
+function warpQuadToRect(
+  src: HTMLCanvasElement,
+  quad: [Pt, Pt, Pt, Pt],
+  outW: number,
+  outH: number
+): HTMLCanvasElement {
+  const [tl, tr, br, bl] = quad;
+  const out = document.createElement('canvas');
+  out.width = outW;
+  out.height = outH;
+  const ctx = out.getContext('2d')!;
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, outW, outH);
+
+  const G = 24;
+  for (let i = 0; i < G; i++) {
+    for (let j = 0; j < G; j++) {
+      const u0 = i / G;
+      const u1 = (i + 1) / G;
+      const v0 = j / G;
+      const v1 = (j + 1) / G;
+      const src00 = lerp(lerp(tl, tr, u0), lerp(bl, br, u0), v0);
+      const src10 = lerp(lerp(tl, tr, u1), lerp(bl, br, u1), v0);
+      const src01 = lerp(lerp(tl, tr, u0), lerp(bl, br, u0), v1);
+      const src11 = lerp(lerp(tl, tr, u1), lerp(bl, br, u1), v1);
+      // Nudge dest cells outward ~0.5px so triangle seams don't show.
+      const dx0 = u0 * outW - 0.5;
+      const dx1 = u1 * outW + 0.5;
+      const dy0 = v0 * outH - 0.5;
+      const dy1 = v1 * outH + 0.5;
+      const d00 = { x: dx0, y: dy0 };
+      const d10 = { x: dx1, y: dy0 };
+      const d01 = { x: dx0, y: dy1 };
+      const d11 = { x: dx1, y: dy1 };
+      drawTriangle(ctx, src, [src00, src10, src11], [d00, d10, d11]);
+      drawTriangle(ctx, src, [src00, src11, src01], [d00, d11, d01]);
+    }
+  }
+  return out;
+}
+
+/** Straighten a captured page: perspective de-warp if a document quad is found,
+ *  otherwise a projection-profile deskew, then crop to the content. */
 function autoEnhanceCanvas(src: HTMLCanvasElement): HTMLCanvasElement {
-  const { gray, w, h } = toAnalysisGray(src, 400);
+  const ANALYSIS_W = 500;
+  const { gray, w, h } = toAnalysisGray(src, ANALYSIS_W);
+
+  const quad = documentQuad(gray, w, h);
+  if (quad) {
+    const sx = src.width / w;
+    const sy = src.height / h;
+    const scaled = quad.map((p) => ({ x: p.x * sx, y: p.y * sy })) as [Pt, Pt, Pt, Pt];
+    const { width, height } = warpTargetSize(scaled);
+    const cap = 2400;
+    const k = Math.min(1, cap / Math.max(width, height));
+    if (width > 20 && height > 20) {
+      return warpQuadToRect(
+        src,
+        scaled,
+        Math.max(1, Math.round(width * k)),
+        Math.max(1, Math.round(height * k))
+      );
+    }
+  }
+
   const skew = estimateSkew(gray, w, h);
   const straight = skew !== 0 ? rotateCanvas(src, -skew) : src;
 
   const box = contentBox(straight);
-  // Ignore a "crop" that barely changes anything or would trim almost everything.
   const area = (box.w * box.h) / (straight.width * straight.height);
   if (area > 0.98 || area < 0.15) return straight;
 
@@ -761,6 +983,58 @@ async function normalizeScanImage(
   return { bytes: await blob.arrayBuffer(), width: canvas.width, height: canvas.height };
 }
 
+export interface ScanPageLayout {
+  pageWidth: number;
+  pageHeight: number;
+  drawWidth: number;
+  drawHeight: number;
+  x: number;
+  y: number;
+}
+
+/**
+ * Work out the page box and where a photo of `imgWidth`×`imgHeight` sits on it.
+ * `'fit'` → the page *is* the photo; `'a4'`/`'letter'` → the photo is scaled to
+ * fit inside `margin` and centred, and the page turns landscape when the photo is
+ * wider than tall. Pure geometry, exported for unit testing.
+ */
+export function scanPageLayout(
+  imgWidth: number,
+  imgHeight: number,
+  pageSize: ScanPageSize,
+  margin = 24
+): ScanPageLayout {
+  if (pageSize === 'fit') {
+    return {
+      pageWidth: imgWidth,
+      pageHeight: imgHeight,
+      drawWidth: imgWidth,
+      drawHeight: imgHeight,
+      x: 0,
+      y: 0,
+    };
+  }
+
+  const base = SCAN_PAGE_DIMENSIONS[pageSize];
+  const landscape = imgWidth > imgHeight;
+  const pageWidth = landscape ? base.height : base.width;
+  const pageHeight = landscape ? base.width : base.height;
+  const scale = Math.min(
+    (pageWidth - margin * 2) / imgWidth,
+    (pageHeight - margin * 2) / imgHeight
+  );
+  const drawWidth = imgWidth * scale;
+  const drawHeight = imgHeight * scale;
+  return {
+    pageWidth,
+    pageHeight,
+    drawWidth,
+    drawHeight,
+    x: (pageWidth - drawWidth) / 2,
+    y: (pageHeight - drawHeight) / 2,
+  };
+}
+
 /**
  * Build a PDF from photos captured with the device camera (or picked from disk).
  * `pageSize: 'fit'` makes each page match its photo; 'a4'/'letter' place the photo
@@ -778,7 +1052,6 @@ export async function scanToPdf(
   const pageSize = options?.pageSize ?? 'fit';
   const filter = options?.filter ?? 'none';
   const autoEnhance = options?.autoEnhance ?? true;
-  const margin = 24;
   const pdfDoc = await PDFDocument.create();
 
   for (const source of images) {
@@ -789,29 +1062,13 @@ export async function scanToPdf(
     );
     const image = await pdfDoc.embedJpg(bytes);
 
-    if (pageSize === 'fit') {
-      const page = pdfDoc.addPage([imgWidth, imgHeight]);
-      page.drawImage(image, { x: 0, y: 0, width: imgWidth, height: imgHeight });
-      continue;
-    }
-
-    const base = SCAN_PAGE_DIMENSIONS[pageSize];
-    const landscape = imgWidth > imgHeight;
-    const pageWidth = landscape ? base.height : base.width;
-    const pageHeight = landscape ? base.width : base.height;
-    const page = pdfDoc.addPage([pageWidth, pageHeight]);
-
-    const scale = Math.min(
-      (pageWidth - margin * 2) / imgWidth,
-      (pageHeight - margin * 2) / imgHeight
-    );
-    const drawWidth = imgWidth * scale;
-    const drawHeight = imgHeight * scale;
+    const layout = scanPageLayout(imgWidth, imgHeight, pageSize);
+    const page = pdfDoc.addPage([layout.pageWidth, layout.pageHeight]);
     page.drawImage(image, {
-      x: (pageWidth - drawWidth) / 2,
-      y: (pageHeight - drawHeight) / 2,
-      width: drawWidth,
-      height: drawHeight,
+      x: layout.x,
+      y: layout.y,
+      width: layout.drawWidth,
+      height: layout.drawHeight,
     });
   }
 
